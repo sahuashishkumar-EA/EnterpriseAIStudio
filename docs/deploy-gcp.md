@@ -72,7 +72,21 @@ contain your project and email. Leave `console_domain` as is for now.
 | `cloud_run_iap` (**default**) | the governor's `https://…run.app` URL | nothing extra | IAP directly on Cloud Run: no load balancer, no domain or certificate to wait for. Uses the Google-managed OAuth client. |
 | `load_balancer` | `https://<your domain>` | a DNS name + A record; OAuth client if the project has no organization | Adds Cloud Armor rate limiting and a custom domain. Used in `prod.tfvars`. |
 
-For `cloud_run_iap` there is nothing to set. `console_domain` is ignored in this mode.
+For `cloud_run_iap` there is nothing to set in Terraform. `console_domain` is ignored in this mode.
+**If the project has no organization (personal Gmail account):** IAP's Google-managed OAuth
+client only admits users inside an organization, so you'll get "You don't have access" even with
+the IAP role. After the apply, give IAP your own OAuth client in the Cloud Console. Terraform
+can't set this; it isn't overwritten by later applies.
+
+1. **Google Auth Platform**: audience *External*, publishing status *Testing*, add your Gmail
+   address under **Test users**.
+2. **Clients → Create client → Web application**. Add the redirect URI
+   `https://iap.googleapis.com/v1/oauth/clientIds/CLIENT_ID:handleRedirect` (your client ID).
+   Save the client ID and secret.
+3. **Security → Identity-Aware Proxy → Applications**. On the `eap-dev-governor` row,
+   open **Settings**, tick **Enable custom OAuth credentials** (wording may differ slightly),
+   enter the ID and secret, and Save.
+4. Retry in an incognito window after a few minutes.
 
 For `load_balancer`, add `console_access = "load_balancer"` and `console_domain = "<host>"` to
 `envs/dev.tfvars`. Create an A record for the host pointing at the `console_ip` output after
