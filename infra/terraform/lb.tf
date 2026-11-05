@@ -98,9 +98,16 @@ resource "google_iap_web_backend_service_iam_member" "console_access" {
 }
 
 # IAP's service agent invokes the governor on behalf of authenticated users.
+# It does not exist in a new project until requested, so create it explicitly.
+resource "google_project_service_identity" "iap" {
+  provider   = google-beta
+  service    = "iap.googleapis.com"
+  depends_on = [google_project_service.apis]
+}
+
 resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
   name     = google_cloud_run_v2_service.governor.name
   location = var.region
   role     = "roles/run.invoker"
-  member   = "serviceAccount:service-${local.project_number}@gcp-sa-iap.iam.gserviceaccount.com"
+  member   = "serviceAccount:${google_project_service_identity.iap.email}"
 }
