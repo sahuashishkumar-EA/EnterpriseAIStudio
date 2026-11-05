@@ -3,6 +3,7 @@ environment            = "prod"
 region                 = "europe-west4"
 governor_image         = "europe-west4-docker.pkg.dev/my-eap-prod/eap-prod-images/governor:REPLACE_WITH_DIGEST"
 runtime_image          = "europe-west4-docker.pkg.dev/my-eap-prod/eap-prod-images/runtime:REPLACE_WITH_DIGEST"
+console_access         = "load_balancer" # custom domain + Cloud Armor in prod
 console_domain         = "agents.example.com"
 console_access_members = ["group:agent-builders@example.com", "group:agent-approvers@example.com"]
 bootstrap_admins       = ["platform-admin@example.com"]

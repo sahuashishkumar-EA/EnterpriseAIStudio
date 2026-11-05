@@ -10,8 +10,9 @@ resource "google_monitoring_notification_channel" "email" {
 locals {
   channels = google_monitoring_notification_channel.email[*].id
   run_services = {
-    governor = google_cloud_run_v2_service.governor.name
-    runtime  = google_cloud_run_v2_service.runtime.name
+    governor          = google_cloud_run_v2_service.governor["console"].name
+    governor-internal = google_cloud_run_v2_service.governor["internal"].name
+    runtime           = google_cloud_run_v2_service.runtime.name
   }
 }
 

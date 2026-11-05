@@ -85,12 +85,13 @@ def create_app(
 ) -> Starlette:
     settings = settings or Settings.from_env()
     db = db or Database(expand_url(settings.database_url))
-    db.migrate(HERE / "migrations")
-    with db.transaction() as tx:
-        if settings.seed_catalog:
-            seed.seed(tx)
-        for admin in settings.bootstrap_admins:
-            security.grant(tx, admin, "*", "platform_admin", "system:bootstrap")
+    with db.startup_lock("eap-governor-startup"):  # console + internal services start concurrently
+        db.migrate(HERE / "migrations")
+        with db.transaction() as tx:
+            if settings.seed_catalog:
+                seed.seed(tx)
+            for admin in settings.bootstrap_admins:
+                security.grant(tx, admin, "*", "platform_admin", "system:bootstrap")
     gov = Gov(
         settings=settings,
         db=db,

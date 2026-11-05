@@ -24,9 +24,20 @@ variable "runtime_image" {
   type        = string
 }
 
-variable "console_domain" {
-  description = "DNS name for the governor console behind the HTTPS load balancer + IAP."
+variable "console_access" {
+  description = "cloud_run_iap: IAP directly on the governor's Cloud Run URL (no load balancer, no domain). load_balancer: HTTPS LB + custom domain + IAP + Cloud Armor."
   type        = string
+  default     = "cloud_run_iap"
+  validation {
+    condition     = contains(["cloud_run_iap", "load_balancer"], var.console_access)
+    error_message = "console_access must be cloud_run_iap or load_balancer."
+  }
+}
+
+variable "console_domain" {
+  description = "DNS name for the console. Only used when console_access = load_balancer."
+  type        = string
+  default     = ""
 }
 
 variable "console_access_members" {
@@ -36,7 +47,7 @@ variable "console_access_members" {
 }
 
 variable "iap_oauth_client_id" {
-  description = "Optional OAuth client for IAP. Leave empty to use the Google-managed client."
+  description = "Optional OAuth client for IAP (load_balancer mode only). Leave empty to use the Google-managed client."
   type        = string
   default     = ""
 }

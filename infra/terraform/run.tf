@@ -5,22 +5,54 @@ locals {
     "pubsub-push=${google_service_account.pubsub_push.email}",
   ])
 
-  governor_env = {
-    EAP_AUTH_MODES            = "iap,google_id"
-    EAP_IAP_AUDIENCE          = "/projects/${local.project_number}/global/backendServices/${google_compute_backend_service.console.generated_id}"
-    EAP_GOOGLE_AUDIENCES      = local.governor_url
+  # The governor image runs as two Cloud Run services sharing one database:
+  #   console   - web console + public API for people, behind IAP
+  #               (IAP directly on Cloud Run, or on the HTTPS load balancer; see var.console_access)
+  #   internal  - service-to-service API (runtime resolve, Cloud Tasks callbacks), internal ingress, no IAP
+  # Keeping machine traffic off the IAP-protected service avoids IAP in the runtime's hot path.
+  governor_common_env = {
     EAP_SERVICE_ACCOUNTS      = local.service_accounts
     EAP_INTERNAL_CALLERS      = "runtime"
     EAP_RUNTIME_URL           = local.runtime_url
     EAP_RUNTIME_AUTH          = "google_id"
     EAP_EVENTS_TOPIC          = google_pubsub_topic.events.id
     EAP_TASKS_QUEUE           = google_cloud_tasks_queue.governor_evals.id
-    EAP_TASKS_BASE_URL        = local.governor_url
+    EAP_TASKS_BASE_URL        = local.governor_internal_url
     EAP_TASKS_SERVICE_ACCOUNT = google_service_account.governor.email
     EAP_BOOTSTRAP_ADMINS      = join(",", var.bootstrap_admins)
-    EAP_BASE_URL              = "https://${var.console_domain}"
     DATABASE_URL              = local.database_urls["governor"]
     GOOGLE_CLOUD_PROJECT      = var.project_id
+  }
+
+  # Audience of the IAP JWT differs between IAP on Cloud Run and IAP on a backend service.
+  iap_audience = local.console_direct ? (
+    "/projects/${local.project_number}/locations/${var.region}/services/${local.name}-governor"
+    ) : (
+    "/projects/${local.project_number}/global/backendServices/${google_compute_backend_service.console[0].generated_id}"
+  )
+
+  governor_services = {
+    console = {
+      name    = "${local.name}-governor"
+      ingress = local.console_direct ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+      iap     = local.console_direct
+      env = merge(local.governor_common_env, {
+        EAP_AUTH_MODES       = "iap"
+        EAP_IAP_AUDIENCE     = local.iap_audience
+        EAP_GOOGLE_AUDIENCES = local.governor_url
+        EAP_BASE_URL         = local.console_url
+      })
+    }
+    internal = {
+      name    = "${local.name}-governor-internal"
+      ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+      iap     = false
+      env = merge(local.governor_common_env, {
+        EAP_AUTH_MODES       = "google_id"
+        EAP_GOOGLE_AUDIENCES = local.governor_internal_url
+        EAP_BASE_URL         = local.governor_internal_url
+      })
+    }
   }
 
   runtime_env = {
@@ -33,7 +65,7 @@ locals {
     EAP_EVENT_CALLERS         = "pubsub-push"
     EAP_TASK_CALLERS          = "runtime"
     EAP_TRUSTED_SERVICES      = "governor,runtime"
-    EAP_GOVERNOR_URL          = local.governor_url
+    EAP_GOVERNOR_URL          = local.governor_internal_url
     EAP_GOVERNOR_AUTH         = "google_id"
     EAP_TASKS_QUEUE           = google_cloud_tasks_queue.runtime_runs.id
     EAP_TASKS_BASE_URL        = local.runtime_url
@@ -44,10 +76,19 @@ locals {
   }
 }
 
+moved {
+  from = google_cloud_run_v2_service.governor
+  to   = google_cloud_run_v2_service.governor["console"]
+}
+
 resource "google_cloud_run_v2_service" "governor" {
-  name                = "${local.name}-governor"
+  # google-beta: iap_enabled (IAP directly on Cloud Run) is only in the beta provider.
+  provider            = google-beta
+  for_each            = local.governor_services
+  name                = each.value.name
   location            = var.region
-  ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  ingress             = each.value.ingress
+  iap_enabled         = each.value.iap
   deletion_protection = var.deletion_protection
   labels              = local.labels
 
@@ -74,7 +115,7 @@ resource "google_cloud_run_v2_service" "governor" {
         limits = { cpu = "1", memory = "1Gi" }
       }
       dynamic "env" {
-        for_each = local.governor_env
+        for_each = each.value.env
         content {
           name  = env.key
           value = env.value
@@ -174,12 +215,12 @@ resource "google_cloud_run_v2_service" "runtime" {
 }
 
 # ------------------------------------------------------------ who may call whom
-resource "google_cloud_run_v2_service_iam_member" "governor_invokers" {
+resource "google_cloud_run_v2_service_iam_member" "governor_internal_invokers" {
   for_each = {
     runtime  = "serviceAccount:${google_service_account.runtime.email}"  # resolve API
-    governor = "serviceAccount:${google_service_account.governor.email}" # Cloud Tasks -> self
+    governor = "serviceAccount:${google_service_account.governor.email}" # Cloud Tasks eval callbacks
   }
-  name     = google_cloud_run_v2_service.governor.name
+  name     = google_cloud_run_v2_service.governor["internal"].name
   location = var.region
   role     = "roles/run.invoker"
   member   = each.value

@@ -1,5 +1,14 @@
+output "console_url" {
+  description = "Open this in a browser (IAP sign-in)."
+  value       = local.console_url
+}
+
 output "governor_url" {
-  value = google_cloud_run_v2_service.governor.uri
+  value = google_cloud_run_v2_service.governor["console"].uri
+}
+
+output "governor_internal_url" {
+  value = google_cloud_run_v2_service.governor["internal"].uri
 }
 
 output "runtime_url" {
@@ -7,8 +16,8 @@ output "runtime_url" {
 }
 
 output "console_ip" {
-  description = "Point console_domain's A record here."
-  value       = google_compute_global_address.console.address
+  description = "load_balancer mode: point console_domain's A record here."
+  value       = local.console_direct ? null : google_compute_global_address.console[0].address
 }
 
 output "artifact_registry" {

@@ -6,8 +6,11 @@ locals {
   name           = "eap-${var.environment}"
   project_number = data.google_project.this.number
   # Deterministic Cloud Run URLs break the governor <-> runtime reference cycle.
-  governor_url = "https://${local.name}-governor-${local.project_number}.${var.region}.run.app"
-  runtime_url  = "https://${local.name}-runtime-${local.project_number}.${var.region}.run.app"
+  governor_url          = "https://${local.name}-governor-${local.project_number}.${var.region}.run.app"
+  governor_internal_url = "https://${local.name}-governor-internal-${local.project_number}.${var.region}.run.app"
+  console_direct        = var.console_access == "cloud_run_iap"
+  console_url           = local.console_direct ? local.governor_url : "https://${var.console_domain}"
+  runtime_url           = "https://${local.name}-runtime-${local.project_number}.${var.region}.run.app"
   labels = {
     app         = "enterprise-agent-platform"
     environment = var.environment

@@ -160,7 +160,8 @@ class Authenticator:
                 token, key, algorithms=["ES256"], audience=self.config.iap_audience, issuer=IAP_ISSUER
             )
         except jwt.PyJWTError as e:
-            raise AuthError(f"invalid IAP assertion: {e}") from e
+            aud = jwt.decode(token, options={"verify_signature": False}).get("aud")
+            raise AuthError(f"invalid IAP assertion: {e} (token aud={aud!r}, expected {self.config.iap_audience!r})") from e
         return Principal(sub=claims["sub"], email=claims.get("email"), kind="user", mode="iap", claims=claims)
 
     async def _google_id(self, token: str) -> Principal:

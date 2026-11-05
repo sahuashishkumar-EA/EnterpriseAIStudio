@@ -71,7 +71,8 @@ def create_app(
 ) -> Starlette:
     settings = settings or Settings.from_env()
     db = db or Database(expand_url(settings.database_url))
-    db.migrate(HERE / "migrations")
+    with db.startup_lock("eap-runtime-startup"):
+        db.migrate(HERE / "migrations")
     auth = Authenticator(settings.auth)
     resolver = Resolver(settings.governor_url, settings.governor_auth, transport=governor_transport,
                         ttl_s=settings.resolver_ttl_s, max_stale_s=settings.resolver_max_stale_s)

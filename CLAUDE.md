@@ -33,7 +33,7 @@ Everything below is implemented. The original `eap_core` was not available, so i
   mock adapters with fallbacks, tools (builtin, REST, MCP streamable HTTP, BigQuery read-only),
   pgvector knowledge, atomic budget counters, runs table, `/internal/v1/execute`, `/internal/v1/events`,
   MCP server at `/mcp`.
-- `infra/terraform` (passes `terraform validate`, never applied), `cloudbuild.yaml`, `docker-compose.yml`, Dockerfiles.
+- `infra/terraform` (passes `terraform validate` on google/google-beta 6.50; console via IAP on Cloud Run by default, optional HTTPS LB), `cloudbuild.yaml`, `docker-compose.yml`, Dockerfiles.
 - `tests/`: 54 tests (unit, in-process e2e with both apps wired over ASGI, MCP, Postgres 16 + pgvector).
   Run the Postgres tests with `EAP_TEST_PG_DSN=...`.
 

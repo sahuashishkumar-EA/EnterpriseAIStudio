@@ -68,9 +68,14 @@ steps:
   - id: deploy-governor
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     waitFor: ["deploy-runtime"]
-    entrypoint: gcloud
-    args: ["run", "services", "update", "eap-${_ENV}-governor", "--region", "${_REGION}",
-           "--image", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/governor:${SHORT_SHA}"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        for svc in eap-${_ENV}-governor-internal eap-${_ENV}-governor; do
+          gcloud run services update $$svc --region ${_REGION} \
+            --image ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/governor:${SHORT_SHA}
+        done
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/governor:${SHORT_SHA}

@@ -173,6 +173,29 @@ class Database:
 
     # ------------------------------------------------------------------- migrations
 
+    @contextmanager
+    def startup_lock(self, name: str) -> Iterator[None]:
+        """Serialize startup work (migrations, seeding) across instances/services.
+        Postgres: session advisory lock on a dedicated connection. SQLite: process lock."""
+        if self.dialect == "sqlite":
+            with self._lock:
+                yield
+            return
+        import zlib
+
+        conn = self._pg_conn()
+        key = zlib.crc32(name.encode())
+        try:
+            conn.execute("SELECT pg_advisory_lock(%s)", (key,))
+            conn.commit()
+            yield
+        finally:
+            try:
+                conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
+                conn.commit()
+            finally:
+                self._pool.put(conn)
+
     def migrate(self, directory: str | os.PathLike) -> list[str]:
         applied: list[str] = []
         with self.transaction() as tx:
