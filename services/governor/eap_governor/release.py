@@ -58,13 +58,18 @@ def validate(tx: Tx, defn: schema.AgentDefinition, owner_bu: str) -> dict[str, A
     return {"ok": not violations, "violations": violations, "content_hash": defn.content_hash()}
 
 
-def release_check(tx: Tx, name: str, publisher: str | None = None, bump: str | None = None) -> dict[str, Any]:
+def release_check(tx: Tx, name: str, publisher: str | None = None, bump: str | None = None,
+                  relaxed: bool = False) -> dict[str, Any]:
+    """relaxed (dev environments only): separation of duties is not enforced, so one person
+    may author, approve and publish. Every step is still recorded in the audit log."""
     agent = store.get_agent(tx, name)
     draft = store.get_draft(tx, name)
     defn = schema.parse_definition(draft["definition"])
     h = draft["content_hash"]
     policy = store.effective_policy(tx, agent["owner_bu"])
     rp = policy.release
+    if relaxed:
+        rp = rp.model_copy(update={"separation_of_duties": False})
     blockers: list[str] = []
 
     val = validate(tx, defn, agent["owner_bu"])
@@ -141,10 +146,12 @@ def release_check(tx: Tx, name: str, publisher: str | None = None, bump: str | N
         "bump": chosen,
         "next_version": next_version,
         "policy": rp.model_dump(),
+        "relaxed": relaxed,
     }
 
 
-def approve(tx: Tx, name: str, actor: str, decision: str, comment: str, content_hash: str | None) -> dict[str, Any]:
+def approve(tx: Tx, name: str, actor: str, decision: str, comment: str, content_hash: str | None,
+            relaxed: bool = False) -> dict[str, Any]:
     if decision not in ("approve", "reject"):
         raise Invalid("decision must be approve or reject")
     draft = store.get_draft(tx, name)
@@ -152,7 +159,7 @@ def approve(tx: Tx, name: str, actor: str, decision: str, comment: str, content_
         raise Conflict("draft changed since you reviewed it", {"current": draft["content_hash"]})
     agent = store.get_agent(tx, name)
     policy = store.effective_policy(tx, agent["owner_bu"])
-    if policy.release.separation_of_duties and actor in draft["editors"]:
+    if policy.release.separation_of_duties and not relaxed and actor in draft["editors"]:
         raise Conflict("separation of duties: you edited this draft and cannot approve it")
     tx.execute(
         "INSERT INTO approvals (id, agent_name, content_hash, approver, decision, comment, at) VALUES (?, ?, ?, ?, ?, ?, ?) "
@@ -164,8 +171,8 @@ def approve(tx: Tx, name: str, actor: str, decision: str, comment: str, content_
     return {"content_hash": draft["content_hash"], "decision": decision}
 
 
-def publish(tx: Tx, name: str, actor: str, bump: str | None, changelog: str) -> dict[str, Any]:
-    check = release_check(tx, name, publisher=actor, bump=bump)
+def publish(tx: Tx, name: str, actor: str, bump: str | None, changelog: str, relaxed: bool = False) -> dict[str, Any]:
+    check = release_check(tx, name, publisher=actor, bump=bump, relaxed=relaxed)
     if not check["ok"]:
         raise Conflict("release gate failed", check)
     draft = store.get_draft(tx, name)

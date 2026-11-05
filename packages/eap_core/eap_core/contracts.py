@@ -9,6 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field
 Status = Literal["ok", "partial", "failed", "needs_input"]
 
 
+class ChatTurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=20000)
+
+
 class InvokeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -18,6 +25,8 @@ class InvokeRequest(BaseModel):
     idempotency_key: str | None = None
     budget_usd: float | None = Field(default=None, gt=0)
     callback_url: str | None = None
+    context: str | None = None  # functional context id; default context when omitted
+    history: list[ChatTurn] = Field(default_factory=list, max_length=40)
 
 
 class ResumeRequest(BaseModel):
@@ -97,3 +106,5 @@ class InvokeResponse(BaseModel):
     error: ErrorInfo | None = None
     needs_input: NeedsInput | None = None
     warnings: list[str] = Field(default_factory=list)
+    context: str | None = None
+    flags: list[str] = Field(default_factory=list)  # e.g. refused:topic_policy, escalated

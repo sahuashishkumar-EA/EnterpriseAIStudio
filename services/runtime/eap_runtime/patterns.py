@@ -17,7 +17,8 @@ from .models import Message
 
 
 async def single_shot(ex: Execution, inp: dict[str, Any]) -> Any:
-    resp = await ex.model([Message("user", ex.render_input(inp))], json_mode=ex.wants_json)
+    ground = await ex.grounding(ex.user_text(inp))
+    resp = await ex.model(ex.conversation(ex.render_input(inp) + ground), json_mode=ex.wants_json)
     return resp.text
 
 
@@ -29,7 +30,11 @@ async def rag(ex: Execution, inp: dict[str, Any]) -> Any:
     query = q if isinstance(q, str) else json.dumps(q, ensure_ascii=False)
     t0 = time.time()
     chunks: list[tuple[dict[str, Any], str, str]] = []  # (row, text, knowledge ref)
-    for kb in ex.defn.bindings.knowledge:
+    from eap_core.compose import knowledge_refs
+    from eap_core.schema import KnowledgeBinding
+
+    kbs = [*ex.defn.bindings.knowledge, *(KnowledgeBinding(ref=r) for r in knowledge_refs(ex.defn, ex.fctx))]
+    for kb in kbs:
         src = ex.catalog["knowledge"].get(kb.ref)
         if src is None:
             ex.warn(f"knowledge {kb.ref} missing from bundle")
@@ -57,14 +62,14 @@ async def rag(ex: Execution, inp: dict[str, Any]) -> Any:
                                snippet=text[:300], score=round(float(row["score"]), 4), knowledge_ref=ref))
         lines.append(f"[{n}] {row.get('title') or row.get('doc_id')}\n{text}")
         used += len(text)
-    await ex.step("retrieval", ",".join(k.ref for k in ex.defn.bindings.knowledge), "ok", t0,
+    await ex.step("retrieval", ",".join(k.ref for k in kbs), "ok", t0,
                   query=query[:200], hits=len(numbered))
     if not numbered:
         ex.warn("no relevant sources found")
     prompt = (f"{ex.render_input(inp)}\n\nSources:\n" + ("\n\n".join(lines) if lines else "(none found)") +
               "\n\nAnswer using only the sources above. Cite every claim with its source number like [1]. "
               "If the sources do not contain the answer, say so.")
-    resp = await ex.model([Message("user", prompt)], json_mode=ex.wants_json)
+    resp = await ex.model(ex.conversation(prompt), json_mode=ex.wants_json)
     cited = {int(n) for n in re.findall(r"\[(\d+)\]", resp.text)}
     used_sources = [s for i, s in enumerate(numbered, 1) if i in cited] or numbered
     for s in used_sources:
@@ -78,7 +83,10 @@ async def research_loop(ex: Execution, inp: dict[str, Any]) -> Any:
     params = ex.defn.pattern.params
     max_iter = min(int(params.get("max_iterations", 6)), int(ex.limits["max_iterations"]))
     parallel = params.get("parallel_tool_calls", True)
-    msgs = [Message("user", ex.render_input(inp) + "\n\nUse the available tools when they help, then give the final answer.")]
+    ground = await ex.grounding(ex.user_text(inp))
+    msgs = ex.conversation(ex.render_input(inp) + ground)
+    if specs:
+        msgs[-1].content += "\n\n(Use the available tools when they help, then give the final answer.)"
     for _ in range(max_iter):
         resp = await ex.model(msgs, tools=specs, json_mode=ex.wants_json)
         if not resp.tool_calls:

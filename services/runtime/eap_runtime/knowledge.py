@@ -117,6 +117,9 @@ class KnowledgeStore:
         await self.db.call(write)
         return {"source": source["id"], "documents": len({r[0] for r in rows}), "chunks": len(rows)}
 
+    async def delete_source(self, source_id: str) -> int:
+        return await self.db.call(lambda tx: tx.execute("DELETE FROM knowledge_chunks WHERE source_id = ?", (source_id,)))
+
     async def search(self, source: dict[str, Any], query: str, top_k: int = 4, min_score: float = 0.0) -> list[dict[str, Any]]:
         if source.get("status", "active") != "active":
             raise ValueError(f"knowledge source {source.get('id')} is {source.get('status')}")

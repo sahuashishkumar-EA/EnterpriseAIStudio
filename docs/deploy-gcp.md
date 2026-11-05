@@ -186,6 +186,35 @@ an organization), switch to `console_access = "load_balancer"` with an OAuth cli
 Two things are not reachable from Cloud Shell in this setup: the runtime API (internal ingress
 by default) and knowledge ingestion (RAG data for `entity-resolver`).
 
+## Upgrading an existing deployment to the Agent Studio release
+
+The release adds the chat app (a third Cloud Run service), Cloud NAT for web scanning, dev mode
+(one person may author, approve and publish) and new environment settings.
+
+```bash
+cd ~/EnterpriseAIStudio && git pull
+```
+
+```bash
+gcloud builds submit --config cloudbuild.images.yaml --substitutions=_REPO=eap-dev-images,_TAG=v3
+```
+
+```bash
+cd infra/terraform && sed -i 's/:v[0-9]*"/:v3"/g' envs/dev.tfvars && grep _image envs/dev.tfvars
+```
+
+```bash
+terraform apply -var-file=envs/dev.tfvars -parallelism=4
+```
+
+Then, for projects without an organization, give the **chat** service the same custom OAuth
+client: Security → Identity-Aware Proxy → Applications → `eap-dev-chat` → Settings → enable
+custom OAuth credentials (same client ID/secret; no new redirect URI is needed). Open:
+
+```bash
+terraform output -raw chat_url
+```
+
 ## Later deployments
 
 Build with a new tag, then apply with the new image vars:

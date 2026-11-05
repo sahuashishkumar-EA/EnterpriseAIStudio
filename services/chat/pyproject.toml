@@ -1,0 +1,19 @@
+[project]
+name = "eap-chat"
+version = "0.1.0"
+description = "Enterprise Agent Platform - demo chat app (talks to published agents via the runtime)"
+requires-python = ">=3.11"
+dependencies = ["eap-core", "starlette>=0.37", "uvicorn[standard]>=0.29", "httpx>=0.27"]
+
+[project.scripts]
+eap-chat = "eap_chat.app:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["eap_chat"]
+
+[tool.setuptools.package-data]
+eap_chat = ["static/*"]

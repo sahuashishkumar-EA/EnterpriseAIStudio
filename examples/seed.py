@@ -91,14 +91,29 @@ async def seed(gov: httpx.AsyncClient, rt: httpx.AsyncClient) -> dict[str, Any]:
     return {name: await release_agent(gov, name) for name in ORDER}
 
 
+async def seed_studio_example(gov: httpx.AsyncClient, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    """Create the two-context bank-assistant and quick-publish it (governor must run in dev mode)."""
+    headers = headers or ADMIN
+    definition = json.loads((HERE / "studio" / "bank-assistant.json").read_text())
+    r = await gov.get("/api/v1/agents/bank-assistant", headers=headers)
+    if r.status_code == 404:
+        _check(await gov.post("/api/v1/agents", json={"name": "bank-assistant", "owner_bu": definition["owner_bu"],
+                                                       "description": definition["description"], "definition": definition},
+                              headers=headers), "create bank-assistant")
+    return _check(await gov.post("/api/v1/agents/bank-assistant/quick-publish", json={}, headers=headers), "quick publish")
+
+
 async def _main() -> None:  # pragma: no cover
     ap = argparse.ArgumentParser()
     ap.add_argument("--governor", default="http://localhost:8080")
     ap.add_argument("--runtime", default="http://localhost:8081")
+    ap.add_argument("--studio", action="store_true", help="also create the two-context bank-assistant (dev mode)")
     a = ap.parse_args()
     async with httpx.AsyncClient(base_url=a.governor, timeout=120) as gov, \
             httpx.AsyncClient(base_url=a.runtime, timeout=120) as rt:
         out = await seed(gov, rt)
+        if a.studio:
+            out["bank-assistant"] = await seed_studio_example(gov)
     print(json.dumps({k: v["version"] for k, v in out.items()}, indent=2))
 
 

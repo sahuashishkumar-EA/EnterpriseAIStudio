@@ -22,11 +22,14 @@ class RuntimeClient:
             return {"Authorization": f"Bearer {await gcp.id_token(self.base_url)}"}
         return {"X-Dev-User": "governor", "X-Dev-Kind": "service"}
 
-    async def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
-        r = await self._client.post("/internal/v1/execute", json=payload, headers=await self._headers())
+    async def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        r = await self._client.post(path, json=payload, headers=await self._headers())
         if r.status_code >= 400:
-            raise RuntimeError(f"runtime execute failed: {r.status_code} {r.text[:500]}")
+            raise RuntimeError(f"runtime {path} failed: {r.status_code} {r.text[:500]}")
         return r.json()
+
+    async def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self.post("/internal/v1/execute", payload)
 
     async def aclose(self) -> None:
         await self._client.aclose()

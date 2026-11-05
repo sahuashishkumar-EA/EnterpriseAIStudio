@@ -22,12 +22,13 @@ from typing import Any, Awaitable, Callable
 
 import jsonschema
 
+from eap_core import compose
 from eap_core.context import BudgetExceeded, CallContext, CallContextError
 from eap_core.contracts import Cost, ErrorInfo, InvokeResponse, NeedsInput, Source, Step, Trace
 from eap_core.schema import AgentBinding, AgentDefinition, parse_definition
 
 from .budgets import BudgetExhausted, Budgets, bu_day_key
-from .guardrails import Enforcer, GuardrailBlocked
+from .guardrails import Enforcer, GuardrailBlocked, PolicyResponse
 from .knowledge import KnowledgeStore
 from .models import (
     UNUSABLE_STATUSES,
@@ -133,6 +134,8 @@ class Execution:
     emitter: Emitter | None = None
     mode: str = "sync"
     resume: Resume | None = None
+    context_id: str | None = None  # functional context selected by the caller
+    history: list[dict[str, str]] = field(default_factory=list)  # prior chat turns [{role, content}]
 
     defn: AgentDefinition = field(init=False)
     cost: Cost = field(default_factory=Cost)
@@ -142,11 +145,14 @@ class Execution:
     state: dict[str, Any] | None = None
     partial: Any = None
     force_partial: bool = False
+    flags: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.defn = parse_definition(self.release["definition"])
+        self.fctx = self.defn.context(self.context_id)  # ValueError for an unknown context id
         self.limits = self.release["limits"]
-        self.enforcer = Enforcer(self.release.get("guardrails") or [])
+        # technical + platform guardrails from the bundle, plus the functional context's own
+        self.enforcer = Enforcer([*(self.release.get("guardrails") or []), *compose.functional_guardrails(self.fctx)])
         self.catalog = self.release.get("catalog") or {"models": {}, "tools": {}, "knowledge": {}}
         self.budget_usd = min(self.ctx.budget_usd, float(self.limits["max_cost_usd"]))
         self.started = time.time()
@@ -186,26 +192,68 @@ class Execution:
         return self.defn.output.json_schema or self.defn.contract.output_schema or None
 
     def system_prompt(self) -> str:
-        p = self.defn.prompt
-        parts = [p.system.strip()]
-        if p.instructions:
-            parts.append(p.instructions.strip())
-        for c in p.context:
-            parts.append(f"## {c.title}\n{c.text.strip()}")
-        if p.examples:
-            parts.append("## Examples\n" + "\n".join(json.dumps(e, ensure_ascii=False) for e in p.examples))
-        soft = self.release.get("soft_controls") or []
-        if soft:
-            parts.append("## Platform rules\n" + "\n".join(f"- {s}" for s in soft))
-        if self.wants_json and self.output_schema():
-            parts.append("## Output\nRespond with a single JSON value matching this JSON schema, and nothing else:\n"
-                         + json.dumps(self.output_schema()))
-        elif self.defn.output.format == "markdown":
-            parts.append("## Output\nRespond in Markdown.")
-        return "\n\n".join(x for x in parts if x)
+        return compose.system_prompt(self.defn, self.fctx, self.release.get("soft_controls") or [],
+                                     self.output_schema() if self.wants_json else None)
 
     def render_input(self, value: Any) -> str:
+        # chat-style input ({"message": "..."}) goes to the model as plain text
+        if isinstance(value, dict) and len(value) == 1:
+            (k, v), = value.items()
+            if k in ("message", "text", "question") and isinstance(v, str):
+                return v
         return "Input (JSON):\n" + json.dumps(value, ensure_ascii=False, indent=2, default=str)
+
+    def user_text(self, value: Any) -> str:
+        if isinstance(value, dict):
+            for k in ("message", "question", "query", "text"):
+                if isinstance(value.get(k), str):
+                    return value[k]
+        return json.dumps(value, ensure_ascii=False, default=str)
+
+    def conversation(self, current: str) -> list[Message]:
+        """Prior turns (input guardrails re-applied to user turns) + the current user message."""
+        msgs: list[Message] = []
+        for t in self.history[-30:]:
+            content = t.get("content", "")
+            if t.get("role") == "user":
+                try:
+                    content = self.enforcer.text("input", content, raise_on_block=False).text
+                except PolicyResponse:
+                    pass
+            msgs.append(Message("assistant" if t.get("role") == "assistant" else "user", content))
+        msgs.append(Message("user", current))
+        return msgs
+
+    async def grounding(self, query: str) -> str:
+        """Reference material from the functional context's scanned web pages ([n] citations)."""
+        refs = compose.knowledge_refs(self.defn, self.fctx)
+        if not refs:
+            return ""
+        t0 = time.time()
+        lines: list[str] = []
+        for ref in refs:
+            src = self.catalog.get("knowledge", {}).get(ref)
+            if src is None:
+                self.warn(f"web sources of context {self.fctx.id!r} have not been scanned yet")
+                continue
+            try:
+                hits = await self.svc.knowledge.search(src, query, 4, 0.05)
+            except Exception as e:  # knowledge must not break the conversation
+                self.warn(f"knowledge search failed: {e}")
+                continue
+            for h in hits:
+                o = self.enforcer.text("retrieval", h["content"], raise_on_block=False)
+                if o.blocked:
+                    continue
+                n = len(self.sources) + 1
+                self.sources.append(Source(id=h["id"], title=h.get("title", ""), uri=h.get("uri", ""),
+                                           snippet=o.text[:300], score=round(float(h["score"]), 4), knowledge_ref=ref))
+                lines.append(f"[{n}] {h.get('title') or h.get('uri')} ({h.get('uri', '')})\n{o.text[:2500]}")
+        await self.step("retrieval", ",".join(refs), "ok", t0, hits=len(lines))
+        if not lines:
+            return ""
+        return ("\n\n---\nReference material (use it when relevant; cite as [n]; if it does not cover the "
+                "question, say so rather than guessing):\n\n" + "\n\n".join(lines))
 
     # ----------------------------------------------------------------------- model
 
@@ -416,6 +464,9 @@ class Execution:
                         raise OutputInvalid(f"output does not match schema: {str(e2).splitlines()[0]}") from e2
         else:
             value = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, indent=2, default=str)
+            disclaimer = self.fctx.guardrails.disclaimer.strip() if self.fctx else ""
+            if disclaimer and disclaimer not in value:
+                value = f"{value.rstrip()}\n\n_{disclaimer}_"
         value = self.enforcer.value("output", value)
         self.enforcer.whole("output", value, {"output_schema": self.output_schema(),
                                               "sources": [s.model_dump() for s in self.sources]})
@@ -455,6 +506,11 @@ class Execution:
             output = await self.finalize(out)
             if self.force_partial:
                 status = "partial"
+        except PolicyResponse as p:
+            # functional guardrail answered: a normal reply for the user, flagged for operators
+            output = p.message
+            self.flags.append("escalated" if p.kind == "escalation" else f"responded:{p.kind}")
+            await self.step("guardrail", p.kind, "responded", stage="input", detail=p.detail)
         except NeedsInputSignal as s:
             status, self.state = "needs_input", s.state
             needs = NeedsInput(prompt=s.prompt, draft=s.draft)
@@ -502,6 +558,8 @@ class Execution:
             error=error,
             needs_input=needs,
             warnings=list(dict.fromkeys(self.warnings)),
+            context=self.fctx.id if self.fctx else None,
+            flags=self.flags,
         )
         if self.emitter and self.mode != "child":
             await self.emitter("result", resp.model_dump(mode="json"))

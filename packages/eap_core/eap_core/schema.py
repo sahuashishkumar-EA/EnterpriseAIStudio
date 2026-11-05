@@ -21,7 +21,7 @@ import json
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SCHEMA_VERSION = "1"
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
@@ -101,7 +101,8 @@ class Bindings(_Model):
 class Guardrail(_Model):
     type: str
     stage: Literal["input", "retrieval", "tool_call", "tool_result", "output"]
-    action: Literal["block", "redact", "warn"] = "block"
+    # respond: stop and answer with params.message (friendly functional guardrails)
+    action: Literal["block", "redact", "warn", "respond"] = "block"
     params: dict[str, Any] = Field(default_factory=dict)
 
     def key(self) -> tuple[str, str]:
@@ -124,8 +125,85 @@ class Output(_Model):
     require_citations: bool = False
 
 
+CONTEXT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+
+
+class Behavior(_Model):
+    tone: Literal["friendly", "professional", "formal", "empathetic", "playful", "neutral"] = "professional"
+    verbosity: Literal["brief", "balanced", "detailed"] = "balanced"
+    language: str = "match the user"
+    emoji: bool = False
+    format: Literal["plain", "bullets", "steps", "auto"] = "auto"
+
+
+class Note(_Model):
+    title: str
+    text: str
+
+
+class WebSource(_Model):
+    url: str
+    max_pages: int = Field(default=5, ge=1, le=25)
+    same_domain_only: bool = True
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        if not re.match(r"^https?://[^\s/]+", v):
+            raise ValueError("url must start with http:// or https://")
+        return v
+
+
+class Escalation(_Model):
+    triggers: list[str] = Field(default_factory=list)
+    message: str = "I'll connect you with a colleague who can help with this."
+
+
+class FunctionalGuardrails(_Model):
+    allowed_topics: list[str] = Field(default_factory=list)  # soft: stay on these topics
+    blocked_topics: list[str] = Field(default_factory=list)  # hard: polite refusal
+    refusal_message: str = "Sorry, I can't help with that topic. Is there something else I can do for you?"
+    escalation: Escalation = Field(default_factory=Escalation)
+    personal_data: Literal["allow", "redact", "refuse"] = "redact"
+    disclaimer: str = ""
+
+
+class Example(_Model):
+    user: str
+    assistant: str
+
+
+class FunctionalContext(_Model):
+    """Business-owned behaviour of the agent for one audience / use case. An agent can have
+    several; the caller selects one per conversation (default_context otherwise)."""
+
+    id: str
+    name: str
+    description: str = ""
+    audience: str = ""
+    role: str = ""
+    goal: str = ""
+    behavior: Behavior = Field(default_factory=Behavior)
+    always: list[str] = Field(default_factory=list)
+    never: list[str] = Field(default_factory=list)
+    notes: list[Note] = Field(default_factory=list)
+    web_sources: list[WebSource] = Field(default_factory=list)
+    guardrails: FunctionalGuardrails = Field(default_factory=FunctionalGuardrails)
+    examples: list[Example] = Field(default_factory=list)
+    starters: list[str] = Field(default_factory=list)
+    owner: str = ""
+
+    @field_validator("id")
+    @classmethod
+    def _id(cls, v: str) -> str:
+        if not CONTEXT_ID_RE.match(v):
+            raise ValueError("context id must match ^[a-z][a-z0-9-]{0,39}$")
+        return v
+
+
 class Exposure(_Model):
     mcp: bool = False  # expose through the runtime's MCP server
+    chat: bool = False  # offer in the chat app
     callable_by_agents: bool = True
     # Who may invoke directly: "owner_bu" (anyone with a role in the owner BU),
     # "authenticated", "bu:<name>", "user:<email>". Trusted service callers always may.
@@ -147,6 +225,8 @@ class AgentDefinition(_Model):
     limits: Limits = Field(default_factory=Limits)
     output: Output = Field(default_factory=Output)
     exposure: Exposure = Field(default_factory=Exposure)
+    contexts: list[FunctionalContext] = Field(default_factory=list)
+    default_context: str | None = None
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -156,6 +236,26 @@ class AgentDefinition(_Model):
         if not NAME_RE.match(v):
             raise ValueError("name must match ^[a-z][a-z0-9-]{1,62}$")
         return v
+
+    @model_validator(mode="after")
+    def _contexts(self) -> "AgentDefinition":
+        ids = [c.id for c in self.contexts]
+        if len(set(ids)) != len(ids):
+            raise ValueError("functional context ids must be unique")
+        if self.default_context is not None and self.default_context not in ids:
+            raise ValueError(f"default_context {self.default_context!r} is not a defined context")
+        return self
+
+    def context(self, context_id: str | None) -> "FunctionalContext | None":
+        """Selected context, else the default, else the first, else None."""
+        if context_id:
+            for c in self.contexts:
+                if c.id == context_id:
+                    return c
+            raise ValueError(f"unknown context {context_id!r}")
+        if self.default_context:
+            return self.context(self.default_context)
+        return self.contexts[0] if self.contexts else None
 
     def canonical(self) -> dict[str, Any]:
         return self.model_dump(mode="json", exclude_none=False)
@@ -259,6 +359,9 @@ def breaking_changes(old: AgentDefinition, new: AgentDefinition) -> list[str]:
         out.append("no longer callable by agents")
     if old.exposure.mcp and not new.exposure.mcp:
         out.append("no longer exposed over MCP")
+    removed = {c.id for c in old.contexts} - {c.id for c in new.contexts}
+    for cid in sorted(removed):
+        out.append(f"functional context {cid!r} removed (callers may select it)")
     return out
 
 
@@ -268,6 +371,8 @@ def required_bump(old: AgentDefinition | None, new: AgentDefinition) -> str:
     if breaking_changes(old, new):
         return "major"
     o, n = old.canonical(), new.canonical()
+    if {c.id for c in new.contexts} - {c.id for c in old.contexts}:
+        return "minor"
     for section in ("contract", "bindings", "pattern", "output", "model", "exposure"):
         if o.get(section) != n.get(section):
             return "minor"

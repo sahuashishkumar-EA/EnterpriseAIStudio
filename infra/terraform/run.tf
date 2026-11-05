@@ -3,6 +3,7 @@ locals {
     "governor=${google_service_account.governor.email}",
     "runtime=${google_service_account.runtime.email}",
     "pubsub-push=${google_service_account.pubsub_push.email}",
+    "chat=${google_service_account.chat.email}",
   ])
 
   # The governor image runs as two Cloud Run services sharing one database:
@@ -12,7 +13,10 @@ locals {
   # Keeping machine traffic off the IAP-protected service avoids IAP in the runtime's hot path.
   governor_common_env = {
     EAP_SERVICE_ACCOUNTS      = local.service_accounts
-    EAP_INTERNAL_CALLERS      = "runtime"
+    EAP_INTERNAL_CALLERS      = "runtime,chat"
+    EAP_RELAXED_RELEASE       = tostring(local.relaxed_release)
+    EAP_WEB_EMBEDDING_MODEL   = var.web_embedding_model
+    EAP_CHAT_URL              = local.chat_url
     EAP_RUNTIME_URL           = local.runtime_url
     EAP_RUNTIME_AUTH          = "google_id"
     EAP_EVENTS_TOPIC          = google_pubsub_topic.events.id
@@ -65,6 +69,7 @@ locals {
     EAP_EVENT_CALLERS         = "pubsub-push"
     EAP_TASK_CALLERS          = "runtime"
     EAP_TRUSTED_SERVICES      = "governor,runtime"
+    EAP_DELEGATING_SERVICES   = "chat"
     EAP_GOVERNOR_URL          = local.governor_internal_url
     EAP_GOVERNOR_AUTH         = "google_id"
     EAP_TASKS_QUEUE           = google_cloud_tasks_queue.runtime_runs.id
@@ -214,6 +219,7 @@ resource "google_cloud_run_v2_service_iam_member" "governor_internal_invokers" {
   for_each = {
     runtime  = "serviceAccount:${google_service_account.runtime.email}"  # resolve API
     governor = "serviceAccount:${google_service_account.governor.email}" # Cloud Tasks eval callbacks
+    chat     = "serviceAccount:${google_service_account.chat.email}"     # list chat-enabled agents
   }
   name     = google_cloud_run_v2_service.governor["internal"].name
   location = var.region
@@ -227,6 +233,7 @@ resource "google_cloud_run_v2_service_iam_member" "runtime_invokers" {
       governor = "serviceAccount:${google_service_account.governor.email}"    # eval execute
       push     = "serviceAccount:${google_service_account.pubsub_push.email}" # events
       runtime  = "serviceAccount:${google_service_account.runtime.email}"     # Cloud Tasks -> self
+      chat     = "serviceAccount:${google_service_account.chat.email}"        # chat app, on behalf of users
     },
     { for m in var.runtime_invokers : m => m }
   )

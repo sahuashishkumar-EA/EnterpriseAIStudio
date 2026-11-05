@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Chat</title>
+  <link rel="stylesheet" href="/static/chat.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="side" id="side">
+      <div class="brand">💬 <span id="title">Agent Chat</span></div>
+      <div class="who" id="who"></div>
+      <div class="label">Agents</div>
+      <div id="agents" class="agents"><p class="muted">Loading…</p></div>
+    </aside>
+    <main class="main">
+      <header class="bar">
+        <button class="menu" id="menu" aria-label="Agents">☰</button>
+        <div>
+          <div class="agent-title" id="agentTitle">Choose an agent</div>
+          <div class="muted small" id="agentSub"></div>
+        </div>
+        <button class="ghost" id="newChat" title="Start over">New chat</button>
+      </header>
+      <section class="log" id="log" aria-live="polite"></section>
+      <div class="starters" id="starters"></div>
+      <form class="composer" id="composer">
+        <textarea id="input" rows="1" placeholder="Type your message…" disabled></textarea>
+        <button class="send" id="send" disabled>Send</button>
+      </form>
+    </main>
+  </div>
+  <script src="/static/chat.js"></script>
+</body>
+</html>

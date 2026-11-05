@@ -98,8 +98,14 @@ def create_agent(tx: Tx, name: str, owner_bu: str, description: str, actor: str,
         "name": name,
         "owner_bu": owner_bu,
         "description": description,
-        "prompt": {"system": f"You are {name}."},
+        "contract": {"description": description,
+                     "input_schema": {"type": "object", "properties": {"message": {"type": "string"}},
+                                      "required": ["message"]}},
+        "prompt": {"system": "You are a helpful assistant of our company. Answer accurately and honestly."},
         "model": {"catalog_id": "mock-small"},
+        "exposure": {"chat": True, "callable_by_agents": True},
+        "contexts": [{"id": "default", "name": "Default", "role": "", "starters": []}],
+        "default_context": "default",
     }
     save_draft(tx, name, definition, actor)
     audit(tx, actor, "agent.create", f"agent/{name}", {"owner_bu": owner_bu})
@@ -147,13 +153,83 @@ def save_draft(tx: Tx, name: str, data: dict[str, Any], actor: str) -> dict[str,
     return get_draft(tx, name)
 
 
+FUNCTIONAL_KEYS = ("contexts", "default_context")
+
+
+def _section_hash(value: Any) -> str:
+    return schema.content_hash({"v": value})[7:23]
+
+
+def section_hashes(definition: dict[str, Any]) -> dict[str, Any]:
+    """Per-section fingerprints so the technical and functional editors can detect each other's
+    concurrent changes (optimistic concurrency per section, not per draft)."""
+    tech = {k: v for k, v in definition.items() if k not in FUNCTIONAL_KEYS}
+    return {
+        "technical": _section_hash(tech),
+        "contexts": {c["id"]: _section_hash(c) for c in definition.get("contexts") or []},
+        "default_context": definition.get("default_context"),
+    }
+
+
 def get_draft(tx: Tx, name: str) -> dict[str, Any]:
     row = tx.fetchone("SELECT * FROM drafts WHERE agent_name = ?", (name,))
     if row is None:
         raise NotFound(f"agent {name} has no draft")
     row["definition"] = loads(row["definition"])
     row["editors"] = loads(row["editors"], [])
+    row["sections"] = section_hashes(row["definition"])
     return row
+
+
+def save_technical(tx: Tx, name: str, fragment: dict[str, Any], actor: str, base: str | None) -> dict[str, Any]:
+    """Technical expert's save: everything except functional contexts."""
+    cur = get_draft(tx, name)
+    if base and base != cur["sections"]["technical"]:
+        raise Conflict("the technical setup was changed by someone else since you loaded it; reload first",
+                       {"current": cur["sections"]["technical"]})
+    d = cur["definition"]
+    new = {k: v for k, v in fragment.items() if k not in FUNCTIONAL_KEYS}
+    new.update({k: d.get(k) for k in FUNCTIONAL_KEYS if k in d})
+    return save_draft(tx, name, new, actor)
+
+
+def save_context(tx: Tx, name: str, ctx_id: str, context: dict[str, Any], actor: str, base: str | None) -> dict[str, Any]:
+    """Functional expert's save of ONE functional context."""
+    cur = get_draft(tx, name)
+    d = cur["definition"]
+    existing = cur["sections"]["contexts"].get(ctx_id)
+    if base is not None and base != (existing or ""):
+        raise Conflict(f"context {ctx_id!r} was changed by someone else since you loaded it; reload first",
+                       {"current": existing})
+    context = {**context, "id": ctx_id}
+    ctxs = [c for c in d.get("contexts") or []]
+    for i, c in enumerate(ctxs):
+        if c["id"] == ctx_id:
+            ctxs[i] = context
+            break
+    else:
+        ctxs.append(context)
+    d["contexts"] = ctxs
+    if not d.get("default_context"):
+        d["default_context"] = ctx_id
+    return save_draft(tx, name, d, actor)
+
+
+def delete_context(tx: Tx, name: str, ctx_id: str, actor: str) -> dict[str, Any]:
+    d = get_draft(tx, name)["definition"]
+    ctxs = [c for c in d.get("contexts") or [] if c["id"] != ctx_id]
+    if len(ctxs) == len(d.get("contexts") or []):
+        raise NotFound(f"context {ctx_id} not found")
+    d["contexts"] = ctxs
+    if d.get("default_context") == ctx_id:
+        d["default_context"] = ctxs[0]["id"] if ctxs else None
+    return save_draft(tx, name, d, actor)
+
+
+def set_default_context(tx: Tx, name: str, ctx_id: str, actor: str) -> dict[str, Any]:
+    d = get_draft(tx, name)["definition"]
+    d["default_context"] = ctx_id
+    return save_draft(tx, name, d, actor)
 
 
 # ---------------------------------------------------------------------- versions
@@ -445,10 +521,14 @@ def catalog_subset(tx: Tx, defn: schema.AgentDefinition) -> dict[str, dict[str, 
         r = tx.fetchone("SELECT * FROM catalog_tools WHERE id = ?", (t.ref,))
         if r:
             out["tools"][t.ref] = _cat_row(r)
-    for k in defn.bindings.knowledge:
-        r = tx.fetchone("SELECT * FROM catalog_knowledge WHERE id = ?", (k.ref,))
+    from eap_core.compose import web_source_id
+
+    refs = [k.ref for k in defn.bindings.knowledge]
+    refs += [web_source_id(defn.name, c.id) for c in defn.contexts if c.web_sources]  # scanned web pages
+    for ref in refs:
+        r = tx.fetchone("SELECT * FROM catalog_knowledge WHERE id = ?", (ref,))
         if r:
-            out["knowledge"][k.ref] = _cat_row(r)
+            out["knowledge"][ref] = _cat_row(r)
     return out
 
 
@@ -628,12 +708,12 @@ def resolve(tx: Tx, name: str, alias: str) -> dict[str, Any]:
     return bundle
 
 
-def mcp_exposed(tx: Tx, alias: str) -> list[dict[str, Any]]:
+def mcp_exposed(tx: Tx, alias: str, channel: str = "mcp") -> list[dict[str, Any]]:
     out = []
     for a in tx.fetchall("SELECT agent_name, version FROM aliases WHERE alias = ?", (alias,)):
         v = get_version(tx, a["agent_name"], a["version"])
         d = v["definition"]
-        if d.get("exposure", {}).get("mcp"):
+        if d.get("exposure", {}).get(channel):
             out.append(
                 {
                     "name": a["agent_name"],
@@ -641,6 +721,9 @@ def mcp_exposed(tx: Tx, alias: str) -> list[dict[str, Any]]:
                     "version": a["version"],
                     "description": d.get("description") or d.get("contract", {}).get("description", ""),
                     "input_schema": d.get("contract", {}).get("input_schema") or {"type": "object"},
+                    "default_context": d.get("default_context"),
+                    "contexts": [{"id": c["id"], "name": c["name"], "description": c.get("description", ""),
+                                  "starters": c.get("starters", [])} for c in d.get("contexts") or []],
                 }
             )
     return out

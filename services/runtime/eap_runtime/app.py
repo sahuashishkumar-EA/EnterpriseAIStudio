@@ -47,6 +47,7 @@ from .models import ModelRegistry
 from .resolver import ResolveError, Resolver, pick_release
 from .runs import RunStore
 from .tools import ToolRunner
+from .webscan import WebScanner
 
 log = logging.getLogger("eap.runtime")
 HERE = Path(__file__).parent
@@ -67,6 +68,7 @@ def create_app(
     governor_transport: httpx.AsyncBaseTransport | None = None,
     vertex_transport: httpx.AsyncBaseTransport | None = None,
     tools_transport: httpx.AsyncBaseTransport | None = None,
+    web_transport: httpx.AsyncBaseTransport | None = None,
     tasks: TaskQueue | None = None,
 ) -> Starlette:
     settings = settings or Settings.from_env()
@@ -85,6 +87,7 @@ def create_app(
         runs=RunStore(db),
     )
     queue = tasks or queue_from_env()
+    scanner = WebScanner(transport=web_transport, ssrf_protection=settings.web_ssrf_protection)
     key = settings.call_context_key
 
     # ------------------------------------------------------------------- helpers
@@ -101,6 +104,8 @@ def create_app(
     def may_invoke(p: Principal, definition: dict[str, Any], owner_bu: str) -> bool:
         if service_name(p) in settings.trusted_services:
             return True
+        if p.mode == "delegated":  # end user authenticated by a front-end service (chat app)
+            return bool(definition.get("exposure", {}).get("chat"))
         roles = p.bu_roles()
         for tok in definition.get("exposure", {}).get("invokers", ["owner_bu"]):
             if tok == "authenticated":
@@ -115,6 +120,17 @@ def create_app(
 
     async def principal(request: Request) -> Principal:
         return await auth.authenticate(request.headers)
+
+    async def caller(request: Request) -> Principal:
+        """The authenticated caller, or the end user a delegating front-end acts for."""
+        p = await principal(request)
+        user = request.headers.get("x-eap-on-behalf-of")
+        if user:
+            if service_name(p) not in settings.delegating_services:
+                raise Forbidden("only delegating front-end services may act on behalf of a user")
+            return Principal(sub=user, email=user if "@" in user else None, kind="user", mode="delegated",
+                             claims={"delegated_by": service_name(p)})
+        return p
 
     def wrap(fn):
         async def handler(request: Request) -> Response:
@@ -175,7 +191,7 @@ def create_app(
         ref = request.path_params["ref"]
         name, _, alias = ref.partition("@")
         alias = alias or settings.default_alias
-        p = await principal(request)
+        p = await caller(request)
         raw = await request.body()
         req = InvokeRequest.model_validate_json(raw) if raw.strip() else InvokeRequest()
         if req.idempotency_key:
@@ -196,6 +212,7 @@ def create_app(
             await queue.enqueue("/internal/v1/tasks/run", {
                 "run_id": ctx.run_id, "agent": name, "alias": alias, "version": rel["version"],
                 "input": req.input, "context": ctx.sign(key, ttl_s=24 * 3600), "principal": p.id,
+                "fcontext": req.context, "history": [t.model_dump() for t in req.history],
             }, task_id=ctx.run_id)
             return JSONResponse({"run_id": ctx.run_id, "status": "queued", "trace_id": ctx.trace_id,
                                  "links": {"self": f"/v1/runs/{ctx.run_id}"}}, status_code=202)
@@ -207,7 +224,8 @@ def create_app(
                 await events.put((ev, data))
 
             ex = Execution(svc, rel, bundle["policy"], ctx, agent=name, alias=alias, owner_bu=bundle["owner_bu"],
-                           emitter=emitter, mode="stream")
+                           emitter=emitter, mode="stream", context_id=req.context,
+                           history=[t.model_dump() for t in req.history])
 
             async def runner() -> None:
                 try:
@@ -230,7 +248,7 @@ def create_app(
                                      headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
         ex = Execution(svc, rel, bundle["policy"], ctx, agent=name, alias=alias, owner_bu=bundle["owner_bu"],
-                       mode="sync")
+                       mode="sync", context_id=req.context, history=[t.model_dump() for t in req.history])
         resp = await run_execution(ex, req.input, principal_id=p.id, idempotency_key=idem)
         return JSONResponse(resp.model_dump(mode="json"))
 
@@ -288,7 +306,8 @@ def create_app(
         rel = bundle["primary"]
         await svc.runs.update(b["run_id"], status="running")
         ex = Execution(svc, rel, bundle["policy"], ctx, agent=b["agent"], alias=b.get("alias"),
-                       owner_bu=bundle["owner_bu"], mode="async")
+                       owner_bu=bundle["owner_bu"], mode="async", context_id=b.get("fcontext"),
+                       history=b.get("history") or [])
         resp = await run_execution(ex, b["input"], principal_id=b["principal"], exists=True)
         return JSONResponse({"run_id": resp.run_id, "status": resp.status})
 
@@ -301,7 +320,8 @@ def create_app(
             bundle = await resolver.resolve(payload["agent"], payload["version"])
             await svc.runs.update(payload["run_id"], status="running")
             ex = Execution(svc, bundle["primary"], bundle["policy"], ctx, agent=payload["agent"],
-                           alias=payload.get("alias"), owner_bu=bundle["owner_bu"], mode="async")
+                           alias=payload.get("alias"), owner_bu=bundle["owner_bu"], mode="async",
+                           context_id=payload.get("fcontext"), history=payload.get("history") or [])
             await run_execution(ex, payload["input"], principal_id=payload["principal"], exists=True)
 
         queue.register("/internal/v1/tasks/run", local_task)
@@ -316,9 +336,31 @@ def create_app(
         ctx = root_context(principal=b.get("principal") or p.id, roles=[], limits=rel["limits"], agent=agent,
                            attributes={"eval": True})
         ex = Execution(svc, rel, policy, ctx, agent=agent, alias=None, owner_bu=rel["definition"].get("owner_bu"),
-                       mode="execute")
+                       mode="execute", context_id=b.get("context"), history=b.get("history") or [])
         resp = await run_execution(ex, b.get("input") or {}, principal_id=p.id)
         return JSONResponse(resp.model_dump(mode="json"))
+
+    async def knowledge_scan(request: Request) -> Response:
+        """Governor asks the runtime to (re)build a functional context's web knowledge."""
+        p = await principal(request)
+        require_service(p, settings.execute_callers)
+        b = await request.json()
+        source_id, sources = b["source_id"], b.get("sources") or []
+        docs, report = await scanner.scan(sources)
+        model = b.get("embedding_model") or "mock-embedding"
+        warnings: list[str] = []
+        await svc.knowledge.delete_source(source_id)
+        result = {"documents": 0, "chunks": 0}
+        if docs:
+            try:
+                result = await svc.knowledge.ingest({"id": source_id, "config": {"embedding_model": model}}, docs)
+            except Exception as e:  # e.g. embedding model not available in this region
+                warnings.append(f"embedding model {model} failed ({str(e)[:150]}); used mock-embedding")
+                model = "mock-embedding"
+                await svc.knowledge.delete_source(source_id)
+                result = await svc.knowledge.ingest({"id": source_id, "config": {"embedding_model": model}}, docs)
+        return JSONResponse({"source_id": source_id, "pages": len(docs), "chunks": result["chunks"],
+                             "embedding_model": model, "report": report, "warnings": warnings})
 
     async def events(request: Request) -> Response:
         p = await principal(request)
@@ -403,6 +445,7 @@ def create_app(
         Route("/internal/v1/execute", wrap(execute), methods=["POST"]),
         Route("/internal/v1/events", wrap(events), methods=["POST"]),
         Route("/internal/v1/tasks/run", wrap(task_run), methods=["POST"]),
+        Route("/internal/v1/knowledge/scan", wrap(knowledge_scan), methods=["POST"]),
     ]
     app = Starlette(routes=routes)
     app.state.svc = svc

@@ -9,6 +9,18 @@ resource "google_service_account" "runtime" {
   display_name = "EAP agent runtime (data plane)"
 }
 
+resource "google_service_account" "chat" {
+  account_id   = "${local.name}-chat"
+  display_name = "EAP demo chat app"
+}
+
+resource "google_project_iam_member" "chat" {
+  for_each = toset(["roles/logging.logWriter", "roles/monitoring.metricWriter"])
+  project  = var.project_id
+  role     = each.value
+  member   = "serviceAccount:${google_service_account.chat.email}"
+}
+
 resource "google_service_account" "pubsub_push" {
   account_id   = "${local.name}-push"
   display_name = "EAP Pub/Sub push to runtime"

@@ -103,7 +103,8 @@ _SPECS: list[PluginSpec] = [
         "pii_redaction",
         "PII detection / redaction",
         "Detects emails, phone numbers, IBANs, credit cards (Luhn), national IDs.",
-        _obj({"entities": {"type": "array", "items": {"enum": ["email", "phone", "iban", "credit_card", "ip_address", "nl_bsn"]}}}),
+        _obj({"entities": {"type": "array", "items": {"enum": ["email", "phone", "iban", "credit_card", "ip_address", "nl_bsn"]}},
+              "message": {**_STR, "description": "Reply used with action 'respond'"}}),
         stages=("input", "retrieval", "tool_call", "tool_result", "output"),
     ),
     PluginSpec(
@@ -121,6 +122,22 @@ _SPECS: list[PluginSpec] = [
         "Blocks text mentioning any listed term (case-insensitive, word boundary).",
         _obj({"terms": _STRS}, ["terms"]),
         stages=("input", "retrieval", "tool_result", "output"),
+    ),
+    PluginSpec(
+        "guardrail",
+        "topic_policy",
+        "Refused topics (friendly)",
+        "If the user raises a listed topic, answer with the refusal message instead of calling the model.",
+        _obj({"terms": _STRS, "message": _STR}, ["terms"]),
+        stages=("input",),
+    ),
+    PluginSpec(
+        "guardrail",
+        "escalation",
+        "Escalation / human hand-off",
+        "If a trigger phrase appears, answer with the hand-off message and flag the run as escalated.",
+        _obj({"terms": _STRS, "message": _STR}, ["terms"]),
+        stages=("input",),
     ),
     PluginSpec(
         "guardrail",

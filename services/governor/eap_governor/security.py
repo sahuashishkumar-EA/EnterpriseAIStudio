@@ -2,7 +2,8 @@
 
 Roles (granted per BU, or platform-wide with bu='*'):
   viewer          read agents, versions, evals, audit
-  author          create agents, edit drafts, manage eval suites, run evals
+  functional_author  edit functional contexts (role, behaviour, knowledge, boundaries), preview
+  author          technical setup + everything functional_author can do; eval suites, run evals
   approver        approve / reject a draft content hash
   publisher       publish versions, move aliases, rollback
   bu_admin        all of the above for the BU + BU policy overlay + BU role bindings
@@ -17,13 +18,14 @@ from __future__ import annotations
 from eap_core.auth import Principal
 from eap_core.db import Tx, now_iso
 
-ROLES = ("viewer", "author", "approver", "publisher", "bu_admin", "platform_admin")
+ROLES = ("viewer", "functional_author", "author", "approver", "publisher", "bu_admin", "platform_admin")
 IMPLIES: dict[str, set[str]] = {
     "viewer": {"viewer"},
-    "author": {"author", "viewer"},
+    "functional_author": {"functional_author", "viewer"},
+    "author": {"author", "functional_author", "viewer"},
     "approver": {"approver", "viewer"},
     "publisher": {"publisher", "viewer"},
-    "bu_admin": {"bu_admin", "author", "approver", "publisher", "viewer"},
+    "bu_admin": {"bu_admin", "author", "functional_author", "approver", "publisher", "viewer"},
     "platform_admin": set(ROLES),
 }
 

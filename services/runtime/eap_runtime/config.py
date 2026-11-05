@@ -24,6 +24,10 @@ class Settings:
     event_callers: list[str] = field(default_factory=lambda: ["pubsub-push", "governor"])
     task_callers: list[str] = field(default_factory=lambda: ["runtime"])
     trusted_services: list[str] = field(default_factory=lambda: ["governor", "runtime"])
+    # front-end services (e.g. the chat app) that authenticate end users themselves and may
+    # invoke chat-exposed agents on their behalf via X-EAP-On-Behalf-Of
+    delegating_services: list[str] = field(default_factory=lambda: ["chat"])
+    web_ssrf_protection: bool = True
     service_name: str = "runtime"
     embedding_location: str = "europe-west4"
 
@@ -50,5 +54,6 @@ class Settings:
             event_callers=lst("EAP_EVENT_CALLERS", "pubsub-push,governor"),
             task_callers=lst("EAP_TASK_CALLERS", "runtime"),
             trusted_services=lst("EAP_TRUSTED_SERVICES", "governor,runtime"),
+            delegating_services=lst("EAP_DELEGATING_SERVICES", "chat"),
             embedding_location=e.get("EAP_EMBEDDING_LOCATION", "europe-west4"),
         )

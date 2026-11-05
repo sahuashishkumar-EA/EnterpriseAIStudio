@@ -167,7 +167,7 @@ def create_app(
     async def agents_create(request: Request, c: Caller) -> Response:
         b = await body(request)
         bu = b.get("owner_bu") or ""
-        c.roles.require(bu, "author")
+        c.roles.require(bu, "functional_author")
         await db.call(store.create_agent, b.get("name", ""), bu, b.get("description", ""), c.id, b.get("definition"))
         return _json(await db.call(lambda tx: _agent_detail(tx, b["name"])), 201)
 
@@ -436,7 +436,7 @@ def create_app(
         b = await body(request)
         return _json(
             await db.call(release.approve, name, c.id, b.get("decision", "approve"), b.get("comment", ""),
-                          b.get("content_hash")),
+                          b.get("content_hash"), settings.relaxed_release),
             201,
         )
 
@@ -451,7 +451,8 @@ def create_app(
     async def release_check(request: Request, c: Caller) -> Response:
         name = request.path_params["name"]
         c.roles.require(await agent_bu(name), "viewer")
-        return _json(await db.call(release.release_check, name, c.id, request.query_params.get("bump")))
+        return _json(await db.call(release.release_check, name, c.id, request.query_params.get("bump"),
+                                   settings.relaxed_release))
 
     async def publish(request: Request, c: Caller) -> Response:
         name = request.path_params["name"]
@@ -460,7 +461,7 @@ def create_app(
         b = await body(request) if (await request.body()).strip() else {}
 
         def run(tx: Tx) -> dict[str, Any]:
-            res = release.publish(tx, name, c.id, b.get("bump"), b.get("changelog", ""))
+            res = release.publish(tx, name, c.id, b.get("bump"), b.get("changelog", ""), settings.relaxed_release)
             if b.get("alias"):
                 res["alias"] = store.move_alias(tx, name, b["alias"], res["version"], c.id, reason="publish")
             return res
@@ -642,7 +643,241 @@ def create_app(
 
     async def internal_agents(request: Request, c: Caller) -> Response:
         alias = request.query_params.get("alias", "prod")
-        return _json({"agents": await db.call(store.mcp_exposed, alias)})
+        channel = request.query_params.get("channel", "mcp")
+        if channel not in ("mcp", "chat"):
+            raise Invalid("channel must be mcp or chat")
+        return _json({"agents": await db.call(store.mcp_exposed, alias, channel)})
+
+    # ------------------------------------------------------- studio (two personas)
+
+    async def get_settings(request: Request, c: Caller) -> Response:
+        return _json({"relaxed_release": settings.relaxed_release, "chat_url": settings.chat_url,
+                      "web_embedding_model": settings.web_embedding_model})
+
+    async def draft_technical(request: Request, c: Caller) -> Response:
+        """Technical expert: save everything except functional contexts."""
+        name = request.path_params["name"]
+        c.roles.require(await agent_bu(name), "author")
+        b = await body(request)
+        return _json(await db.call(store.save_technical, name, b.get("definition") or {}, c.id, b.get("base")))
+
+    async def draft_context_put(request: Request, c: Caller) -> Response:
+        """Functional expert: save one functional context."""
+        name, ctx_id = request.path_params["name"], request.path_params["ctx"]
+        c.roles.require(await agent_bu(name), "functional_author")
+        b = await body(request)
+        return _json(await db.call(store.save_context, name, ctx_id, b.get("context") or {}, c.id, b.get("base")))
+
+    async def draft_context_delete(request: Request, c: Caller) -> Response:
+        name, ctx_id = request.path_params["name"], request.path_params["ctx"]
+        c.roles.require(await agent_bu(name), "functional_author")
+        return _json(await db.call(store.delete_context, name, ctx_id, c.id))
+
+    async def draft_default_context(request: Request, c: Caller) -> Response:
+        name = request.path_params["name"]
+        c.roles.require(await agent_bu(name), "functional_author")
+        b = await body(request)
+        return _json(await db.call(store.set_default_context, name, b.get("context", ""), c.id))
+
+    async def _definition_for(request: Request, name: str) -> schema.AgentDefinition:
+        """The saved draft, or an unsaved definition sent by the editor (live preview)."""
+        raw = await request.body()
+        data = (await body(request)).get("definition") if raw.strip() else None
+        if data:
+            defn = store.parse_or_invalid(data)
+            if defn.name != name:
+                raise Invalid("definition.name must equal the agent name")
+            return defn
+        return schema.parse_definition((await db.call(store.get_draft, name))["definition"])
+
+    async def compose_view(request: Request, c: Caller) -> Response:
+        """What the model sees for a context: composed system prompt + effective guardrails."""
+        from eap_core import compose
+
+        name = request.path_params["name"]
+        bu = await agent_bu(name)
+        c.roles.require(bu, "viewer")
+        defn = await _definition_for(request, name)
+        try:
+            fctx = defn.context(request.query_params.get("context") or None)
+        except ValueError as e:
+            raise Invalid(str(e)) from e
+        policy = await db.call(store.effective_policy, bu)
+        from eap_core.policy import effective_guardrails
+
+        tech = [g.model_dump(mode="json") for g in effective_guardrails(defn, policy)]
+        schema_ = defn.output.json_schema or defn.contract.output_schema or None
+        return _json({
+            "context": fctx.id if fctx else None,
+            "system_prompt": compose.system_prompt(defn, fctx, policy.soft_controls,
+                                                   schema_ if defn.output.format == "json" else None),
+            "guardrails": {"technical_and_platform": tech, "functional": compose.functional_guardrails(fctx)},
+            "knowledge": compose.knowledge_refs(defn, fctx),
+            "completeness": compose.completeness(fctx) if fctx else None,
+        })
+
+    async def preview(request: Request, c: Caller) -> Response:
+        """Chat with the draft (saved or unsaved) before publishing, via the runtime."""
+        name = request.path_params["name"]
+        bu = await agent_bu(name)
+        c.roles.require(bu, "functional_author")
+        b = await body(request)
+        defn = await _definition_for(request, name)
+        message = str(b.get("message") or "").strip()
+        if not message:
+            raise Invalid("message required")
+
+        def prep(tx: Tx) -> dict[str, Any]:
+            policy = store.effective_policy(tx, bu)
+            return {"release": store.release_payload(tx, defn, policy, version="draft", status="draft"),
+                    "policy": dump_policy(policy)}
+
+        p = await db.call(prep)
+        res = await gov.runtime.execute({
+            **p, "agent": name, "principal": c.id, "input": {"message": message},
+            "context": b.get("context"), "history": (b.get("history") or [])[-30:],
+        })
+        return _json(res)
+
+    async def context_scan(request: Request, c: Caller) -> Response:
+        """Fetch the context's web pages into the agent's knowledge (runtime pgvector)."""
+        from eap_core import compose
+
+        name, ctx_id = request.path_params["name"], request.path_params["ctx"]
+        bu = await agent_bu(name)
+        c.roles.require(bu, "functional_author")
+        defn = schema.parse_definition((await db.call(store.get_draft, name))["definition"])
+        try:
+            fctx = defn.context(ctx_id)
+        except ValueError as e:
+            raise NotFound(str(e)) from e
+        if not fctx.web_sources:
+            raise Invalid("this context has no web sources; add URLs and save first")
+        sid = compose.web_source_id(name, ctx_id)
+        try:
+            res = await gov.runtime.post("/internal/v1/knowledge/scan", {
+                "source_id": sid, "sources": [w.model_dump() for w in fctx.web_sources],
+                "embedding_model": settings.web_embedding_model})
+            status = "completed"
+        except RuntimeError as e:
+            res, status = {"error": str(e), "pages": 0, "chunks": 0, "report": []}, "error"
+
+        def save(tx: Tx) -> None:
+            if status == "completed":
+                store.upsert_catalog(tx, "knowledge", sid, {
+                    "kind": "pgvector", "title": f"Web pages: {name} / {fctx.name}",
+                    "description": ", ".join(w.url for w in fctx.web_sources)[:500],
+                    "config": {"embedding_model": res.get("embedding_model", "mock-embedding"), "dimensions": 768},
+                    "data_classification": "public", "owner_bu": bu, "status": "active"}, c.id)
+            tx.execute(
+                "INSERT INTO web_scans (id, agent_name, context_id, source_id, status, pages, chunks, details, "
+                "started_by, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_id("scan_"), name, ctx_id, sid, status, res.get("pages", 0), res.get("chunks", 0),
+                 dumps(res), c.id, now_iso()))
+            store.audit(tx, c.id, "context.scan", f"agent/{name}",
+                        {"context": ctx_id, "status": status, "pages": res.get("pages", 0)})
+
+        await db.call(save)
+        if status == "completed":
+            await gov.emit("catalog.updated", kind="knowledge", id=sid)
+        return _json({"status": status, **res}, 200 if status == "completed" else 502)
+
+    async def context_scans(request: Request, c: Caller) -> Response:
+        name, ctx_id = request.path_params["name"], request.path_params["ctx"]
+        c.roles.require(await agent_bu(name), "viewer")
+        rows = await db.call(lambda tx: tx.fetchall(
+            "SELECT * FROM web_scans WHERE agent_name = ? AND context_id = ? ORDER BY started_at DESC LIMIT 10",
+            (name, ctx_id)))
+        from eap_core.db import loads
+
+        for r in rows:
+            r["details"] = loads(r["details"], {})
+        return _json({"scans": rows})
+
+    async def quick_publish(request: Request, c: Caller) -> Response:
+        """Dev only: evals (auto smoke suite from starters) -> self-approve -> publish -> alias."""
+        name = request.path_params["name"]
+        bu = await agent_bu(name)
+        if not settings.relaxed_release:
+            raise Forbidden("quick publish is only available in dev environments (EAP_RELAXED_RELEASE=true)")
+        for role in ("author", "approver", "publisher"):
+            c.roles.require(bu, role)
+        b = await body(request) if (await request.body()).strip() else {}
+        alias = b.get("alias") or "prod"
+
+        def prepare_runs(tx: Tx) -> dict[str, Any]:
+            draft = store.get_draft(tx, name)
+            defn = schema.parse_definition(draft["definition"])
+            created = False
+            if not tx.fetchone("SELECT id FROM eval_suites WHERE agent_name = ?", (name,)):
+                cases = [{"id": f"{ctx.id}-{i + 1}", "input": {"message": st}, "context": ctx.id}
+                         for ctx in defn.contexts for i, st in enumerate(ctx.starters[:3])]
+                if not cases:
+                    cases = [{"id": "hello", "input": {"message": "Hello, what can you help me with?"}}]
+                tx.execute(
+                    "INSERT INTO eval_suites (id, agent_name, name, cases, assertions, required, source, created_by, "
+                    "created_at) VALUES (?, ?, 'smoke', ?, ?, 1, 'generated', ?, ?)",
+                    (new_id("suite_"), name, dumps(cases), dumps([{"type": "status", "equals": "ok"}]), c.id, now_iso()))
+                created = True
+            ids = []
+            for s_ in tx.fetchall("SELECT id FROM eval_suites WHERE agent_name = ?", (name,)):
+                rid = new_id("evr_")
+                tx.execute(
+                    "INSERT INTO eval_runs (id, agent_name, suite_id, target, content_hash, status, started_by, "
+                    "started_at) VALUES (?, ?, ?, 'draft', ?, 'queued', ?, ?)",
+                    (rid, name, s_["id"], draft["content_hash"], c.id, now_iso()))
+                ids.append(rid)
+            return {"ids": ids, "smoke_suite_created": created}
+
+        prep = await db.call(prepare_runs)
+        for rid in prep["ids"]:
+            await execute_eval_run(rid)
+        runs = [await db.call(release.load_eval_run, rid) for rid in prep["ids"]]
+        failed = [r for r in runs if r["status"] != "completed" or r["pass_rate"] < 1.0]
+        if failed:
+            raise Conflict("evals did not pass; fix the agent or the suite, then try again",
+                           {"runs": [{k: r[k] for k in ("id", "status", "passed", "total", "error")} for r in runs]})
+
+        def ship(tx: Tx) -> dict[str, Any]:
+            draft = store.get_draft(tx, name)
+            latest = store.latest_version(tx, name)
+            if latest and store.get_version(tx, name, latest)["content_hash"] == draft["content_hash"]:
+                version = latest  # nothing new to publish; just point the alias
+                published = False
+            else:
+                release.approve(tx, name, c.id, "approve", "quick publish (dev self-approval)", None, relaxed=True)
+                version = release.publish(tx, name, c.id, None, b.get("changelog") or "quick publish", relaxed=True)["version"]
+                published = True
+            a = store.move_alias(tx, name, alias, version, c.id, reason="quick publish")
+            return {"version": version, "published": published, "alias": a}
+
+        out = await db.call(ship)
+        if out["published"]:
+            await gov.emit("version.published", agent=name, version=out["version"], content_hash="")
+        await gov.emit("alias.moved", agent=name, alias=alias, version=out["version"], canary_version=None,
+                       canary_weight=0)
+        return _json({**out, "evals": [{k: r[k] for k in ("id", "passed", "total")} for r in runs],
+                      "smoke_suite_created": prep["smoke_suite_created"]})
+
+    async def model_test(request: Request, c: Caller) -> Response:
+        """Platform admin: try a catalog model through the runtime before activating it."""
+        if not c.roles.is_platform_admin():
+            raise Forbidden("platform_admin required")
+        mid = request.path_params["id"]
+        entry = await db.call(store.get_catalog, "models", mid)
+        definition = {"name": "model-test", "owner_bu": "platform", "prompt": {"system": "You are a connectivity test."},
+                      "model": {"catalog_id": mid}, "pattern": {"type": "single_shot"},
+                      "contract": {"input_schema": {"type": "object"}}}
+        rel = {"version": "test", "content_hash": "test", "definition": definition, "guardrails": [], "soft_controls": [],
+               "limits": {"max_cost_usd": 0.05, "max_output_tokens": 256, "max_latency_ms": 60000, "max_tool_calls": 0,
+                          "max_iterations": 1, "max_depth": 0, "max_input_tokens": 10000},
+               "catalog": {"models": {mid: {**entry, "status": "active"}}, "tools": {}, "knowledge": {}}}
+        res = await gov.runtime.execute({"release": rel, "policy": {}, "agent": "model-test", "principal": c.id,
+                                         "input": {"message": "Reply with exactly: OK"}})
+        await db.call(lambda tx: store.audit(tx, c.id, "catalog.models.test", f"catalog/models/{mid}",
+                                             {"status": res.get("status")}))
+        return _json({"ok": res.get("status") == "ok", "reply": res.get("output"), "latency_ms": res.get("latency_ms"),
+                      "error": res.get("error"), "warnings": res.get("warnings"), "cost": res.get("cost")})
 
     async def healthz(request: Request) -> Response:
         try:
@@ -697,6 +932,17 @@ def create_app(
         Route(f"{A}/role-bindings", api(roles_post), methods=["POST"]),
         Route(f"{A}/role-bindings", api(roles_delete), methods=["DELETE"]),
         Route(f"{A}/audit", api(audit)),
+        Route(f"{A}/settings", api(get_settings)),
+        Route(f"{A}/agents/{{name}}/draft/technical", api(draft_technical), methods=["PUT"]),
+        Route(f"{A}/agents/{{name}}/draft/contexts/{{ctx}}", api(draft_context_put), methods=["PUT"]),
+        Route(f"{A}/agents/{{name}}/draft/contexts/{{ctx}}", api(draft_context_delete), methods=["DELETE"]),
+        Route(f"{A}/agents/{{name}}/draft/default-context", api(draft_default_context), methods=["PUT"]),
+        Route(f"{A}/agents/{{name}}/compose", api(compose_view), methods=["GET", "POST"]),
+        Route(f"{A}/agents/{{name}}/preview", api(preview), methods=["POST"]),
+        Route(f"{A}/agents/{{name}}/contexts/{{ctx}}/scan", api(context_scan), methods=["POST"]),
+        Route(f"{A}/agents/{{name}}/contexts/{{ctx}}/scans", api(context_scans)),
+        Route(f"{A}/agents/{{name}}/quick-publish", api(quick_publish), methods=["POST"]),
+        Route(f"{A}/catalog/models/{{id}}/test", api(model_test), methods=["POST"]),
         Route("/internal/v1/resolve/{name}/{alias}", internal(resolve)),
         Route("/internal/v1/agents", internal(internal_agents)),
         Route("/internal/v1/tasks/eval-run", internal(task_eval_run), methods=["POST"]),

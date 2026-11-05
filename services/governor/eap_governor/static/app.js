@@ -1,7 +1,10 @@
 // Governor console. Vanilla JS SPA over the /api/v1 endpoints.
 "use strict";
 
-const state = { plugins: null, catalog: null, me: null };
+const state = { plugins: null, catalog: null, me: null, settings: {} };
+
+function persona() { try { return localStorage.getItem("eap.persona") || "functional"; } catch { return "functional"; } }
+function setPersona(p) { try { localStorage.setItem("eap.persona", p); } catch {} }
 
 // ------------------------------------------------------------------ api + identity
 
@@ -45,7 +48,12 @@ function renderIdentity() {
   const dev = devIdentity() || {};
   const user = h("input", { placeholder: "dev user", value: dev.user || "" });
   const roles = h("input", { placeholder: "bu:role,…", value: dev.roles || "" });
+  const per = persona();
   box.append(
+    h("div", { class: "persona", title: "Which screens to start on. Both personas edit the same agent." },
+      ...[["functional", "🧑‍💼 Functional"], ["technical", "🛠️ Technical"]].map(([k, l]) =>
+        h("button", { class: "seg-opt" + (per === k ? " on" : ""), onclick: () => { setPersona(k); renderIdentity(); route(); } }, l))),
+    state.settings.relaxed_release ? h("span", { class: "badge warn", title: "One person may author, approve and publish (audited)." }, "dev mode") : "",
     state.me ? h("span", {}, state.me.principal) : h("span", {}, "not signed in"),
     h("span", { title: "Dev mode only: sent as X-Dev-* headers. Ignored behind IAP." }, "dev:"), user, roles,
     h("button", { onclick: () => { setDevIdentity(user.value ? { user: user.value, roles: roles.value } : null); boot(); } }, "Use"));
@@ -53,6 +61,7 @@ function renderIdentity() {
 
 async function loadShared() {
   state.me = await api("GET", "/me").catch(() => null);
+  if (state.me) state.settings = await api("GET", "/settings").catch(() => ({}));
   renderIdentity();
   if (!state.me) return false;
   state.plugins = await api("GET", "/plugins");
@@ -70,7 +79,7 @@ const pre = (v) => h("pre", {}, typeof v === "string" ? v : JSON.stringify(v, nu
 // ------------------------------------------------------------------------ router
 
 const routes = [
-  [/^#\/agents\/([^/]+)(?:\/(\w+))?$/, (m) => viewAgent(decodeURIComponent(m[1]), m[2] || "definition")],
+  [/^#\/agents\/([^/?]+)(?:\/(\w+))?(?:\?.*)?$/, (m) => viewAgent(decodeURIComponent(m[1]), m[2] || (persona() === "technical" ? "technical" : "overview"))],
   [/^#\/agents$/, viewAgents],
   [/^#\/catalog$/, viewCatalog],
   [/^#\/policies$/, viewPolicies],
@@ -79,7 +88,9 @@ const routes = [
   [/^#\/audit$/, viewAudit],
 ];
 
+let ready = Promise.resolve();
 async function route() {
+  await ready; // never render a screen before identity, settings and catalog are loaded
   const view = document.getElementById("view");
   if (!state.me) {
     view.replaceChildren(h("div", { class: "panel" }, h("h1", {}, "Sign in"),
@@ -120,12 +131,14 @@ async function viewAgents() {
         }) }, "Create")))));
 }
 
-const TABS = [["definition", "Definition"], ["evals", "Evals"], ["release", "Approve & publish"],
-  ["versions", "Versions & aliases"], ["audit", "Audit"]];
+const TABS = [["overview", "Overview"], ["studio", "🧑‍💼 Functional studio"], ["technical", "🛠️ Technical setup"],
+  ["evals", "Evals"], ["release", "Approve & publish"], ["versions", "Versions & aliases"], ["audit", "Audit"]];
 
 async function viewAgent(name, tab) {
   const agent = await api("GET", "/agents/" + encodeURIComponent(name));
-  const body = await ({ definition: tabDefinition, evals: tabEvals, release: tabRelease, versions: tabVersions, audit: tabAgentAudit }[tab] || tabDefinition)(agent);
+  window.onbeforeunload = null;
+  const body = await ({ overview: tabOverview, studio: tabStudio, technical: tabDefinition, definition: tabDefinition,
+    evals: tabEvals, release: tabRelease, versions: tabVersions, audit: tabAgentAudit }[tab] || tabOverview)(agent);
   return h("div", {},
     h("h1", {}, agent.name, " ", h("span", { class: "muted" }, "· ", agent.owner_bu)),
     h("div", { class: "tabs" }, TABS.map(([k, label]) => h("a", { href: `#/agents/${name}/${k}`, class: k === tab ? "active" : "" }, label))),
@@ -136,6 +149,7 @@ async function viewAgent(name, tab) {
 
 function tabDefinition(agent) {
   const def = structuredClone(agent.draft.definition);
+  let base = agent.draft.sections.technical;
   const status = h("div", { class: "muted" }, "Draft ", h("code", {}, agent.draft.content_hash.slice(0, 19)), " · edited by ", agent.draft.editors.join(", ") || "—");
   const result = h("div", {});
   let jsonMode = false;
@@ -151,8 +165,15 @@ function tabDefinition(agent) {
     sectionBindings(def), sectionGuardrails(def), sectionLimits(def), sectionOutput(def), sectionContract(def));
 
   const save = () => act(async () => {
-    const d = await api("PUT", `/agents/${agent.name}/draft`, { definition: def });
-    toast("Draft saved · " + d.content_hash.slice(0, 19));
+    let d;
+    try {
+      d = await api("PUT", `/agents/${agent.name}/draft/technical`, { definition: def, base });
+    } catch (e) {
+      if (e.status === 409) { toast("Someone else changed the technical setup since you opened it. Reload to see their changes.", true); return; }
+      throw e;
+    }
+    base = d.sections.technical;
+    toast("Technical setup saved · " + d.content_hash.slice(0, 19));
     status.replaceChildren("Draft ", h("code", {}, d.content_hash.slice(0, 19)), " · edited by ", d.editors.join(", "));
   });
   const validate = () => act(async () => {
@@ -163,6 +184,9 @@ function tabDefinition(agent) {
   });
   render();
   return h("div", {},
+    h("p", { class: "muted" }, "System-level context, model, orchestration, tools, technical guardrails, limits and output. ",
+      "Functional contexts (role, behaviour, knowledge, boundaries) are edited in the ", h("a", { href: `#/agents/${agent.name}/studio` }, "Functional studio"),
+      " — saving here never overwrites them."),
     h("div", { class: "row panel" }, status,
       h("div", { style: "flex:0 0 auto; display:flex; gap:8px" },
         h("button", { onclick: () => { jsonMode = !jsonMode; render(); } }, "Toggle JSON"),
@@ -191,7 +215,8 @@ function sectionBasics(def) {
       field("Tags", (() => { const i = h("input", { value: (def.tags || []).join(", ") }); i.onchange = () => (def.tags = i.value.split(",").map((s) => s.trim()).filter(Boolean)); return i; })())),
     h("div", { class: "row" },
       field("Expose over MCP", (() => { def.exposure = def.exposure || {}; const c = h("input", { type: "checkbox", checked: def.exposure.mcp }); c.onchange = () => (def.exposure.mcp = c.checked); return c; })()),
-      field("Callable by other agents", (() => { def.exposure = def.exposure || {}; const c = h("input", { type: "checkbox", checked: def.exposure.callable_by_agents !== false }); c.onchange = () => (def.exposure.callable_by_agents = c.checked); return c; })())));
+      field("Callable by other agents", (() => { def.exposure = def.exposure || {}; const c = h("input", { type: "checkbox", checked: def.exposure.callable_by_agents !== false }); c.onchange = () => (def.exposure.callable_by_agents = c.checked); return c; })()),
+      field("Offer in chat app", (() => { def.exposure = def.exposure || {}; const c = h("input", { type: "checkbox", checked: def.exposure.chat }); c.onchange = () => (def.exposure.chat = c.checked); return c; })())));
 }
 
 function sectionPrompt(def) {
@@ -202,7 +227,7 @@ function sectionPrompt(def) {
     h("button", { class: "remove danger", onclick: () => { def.prompt.context.splice(i, 1); renderCtx(); } }, "Remove"),
     field("Title", bind(c, "title", h("input", {}))), field("Text", bind(c, "text", h("textarea", { class: "prose", rows: 4 }))))));
   renderCtx();
-  return h("div", { class: "panel" }, h("h2", {}, "Prompt & context ", h("span", { class: "muted" }, "(soft controls)")),
+  return h("div", { class: "panel" }, h("h2", {}, "System-level context ", h("span", { class: "muted" }, "(technical; applies to every functional context)")),
     field("System prompt", bind(def.prompt, "system", h("textarea", { class: "prose", rows: 6 }))),
     field("Instructions", bind(def.prompt, "instructions", h("textarea", { class: "prose", rows: 3 }))),
     h("h3", {}, "Static context"), list,
@@ -499,7 +524,11 @@ async function viewCatalog() {
     h("div", { class: "panel" }, h("h2", {}, "Models"),
       h("p", { class: "muted" }, "Vertex models are seeded as preview: verify the model ID, regional availability and pricing before setting them active."),
       h("table", {}, h("tr", {}, ["Id", "Provider / model", "Location", "Status", "Pricing $/Mtok", "Notes", ""].map((x) => h("th", {}, x))),
-        models.map((m) => h("tr", {}, h("td", {}, m.id), h("td", {}, `${m.provider} / ${m.model_id}`), h("td", {}, m.location), h("td", {}, statusSel(m)),
+        models.map((m) => h("tr", {}, h("td", {}, m.id, h("div", {}, h("button", { class: "small-btn", title: "Send a tiny request through the runtime", onclick: () => act(async () => {
+            toast(`Testing ${m.id}…`);
+            const r = await api("POST", `/catalog/models/${m.id}/test`);
+            toast(r.ok ? `✓ ${m.id} answered “${String(r.reply).slice(0, 60)}” in ${r.latency_ms} ms` : `✗ ${m.id}: ${r.error ? r.error.message : "failed"}`, !r.ok);
+          }) }, "Test"))), h("td", {}, `${m.provider} / ${m.model_id}`), h("td", {}, m.location), h("td", {}, statusSel(m)),
           h("td", {}, `${m.pricing.input_per_mtok ?? "?"} / ${m.pricing.output_per_mtok ?? "?"}`), h("td", { class: "muted" }, m.notes),
           h("td", {}, h("button", { onclick: () => edit("models", m) }, "Edit"))))),
       h("button", { onclick: () => edit("models", null) }, "+ Model")),
@@ -562,7 +591,7 @@ async function viewGraph() {
 async function viewRoles() {
   const { bindings } = await api("GET", "/role-bindings");
   const p = h("input", { placeholder: "user@example.com" }), bu = h("input", { placeholder: "retail or *" });
-  const role = select(["viewer", "author", "approver", "publisher", "bu_admin", "platform_admin"].map((r) => [r, r]), "viewer", () => {});
+  const role = select(["viewer", "functional_author", "author", "approver", "publisher", "bu_admin", "platform_admin"].map((r) => [r, r]), "viewer", () => {});
   return h("div", {}, h("h1", {}, "Role bindings"),
     h("div", { class: "panel" }, h("table", {}, h("tr", {}, ["Principal", "BU", "Role", "Granted by", ""].map((x) => h("th", {}, x))),
       bindings.map((b) => h("tr", {}, h("td", {}, b.principal), h("td", {}, b.bu), h("td", {}, b.role), h("td", { class: "muted" }, b.granted_by),
@@ -579,7 +608,7 @@ async function viewAudit() {
 // ------------------------------------------------------------------------------ boot
 
 async function boot() {
-  try { await loadShared(); } catch (e) { fail(e); }
+  ready = loadShared().catch((e) => fail(e));
   route();
 }
 window.addEventListener("hashchange", route);

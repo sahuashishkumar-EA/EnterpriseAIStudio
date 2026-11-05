@@ -31,7 +31,7 @@ steps:
       - -c
       - |
         set -euo pipefail
-        pip install -q ./packages/eap_core[postgres] ./services/governor ./services/runtime pytest pytest-asyncio
+        pip install -q ./packages/eap_core[postgres] ./services/governor ./services/runtime ./services/chat pytest pytest-asyncio
         for i in $(seq 1 30); do python -c "import psycopg; psycopg.connect('$${EAP_TEST_PG_DSN}').close()" && break; sleep 2; done
         python -m pytest -q
 
@@ -47,15 +47,22 @@ steps:
     args: ["build", "-f", "services/runtime/Dockerfile",
            "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/runtime:${SHORT_SHA}", "."]
 
+  - id: build-chat
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["test"]
+    args: ["build", "-f", "services/chat/Dockerfile",
+           "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/chat:${SHORT_SHA}", "."]
+
   - id: push
     name: gcr.io/cloud-builders/docker
-    waitFor: ["build-governor", "build-runtime"]
+    waitFor: ["build-governor", "build-runtime", "build-chat"]
     entrypoint: bash
     args:
       - -c
       - |
         docker push ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/governor:${SHORT_SHA}
         docker push ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/runtime:${SHORT_SHA}
+        docker push ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/chat:${SHORT_SHA}
 
   # Runtime first: it must understand any new bundle fields before the governor serves them.
   - id: deploy-runtime
@@ -76,7 +83,10 @@ steps:
           gcloud run services update $$svc --region ${_REGION} \
             --image ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/governor:${SHORT_SHA}
         done
+        gcloud run services update eap-${_ENV}-chat --region ${_REGION} \
+          --image ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/chat:${SHORT_SHA}
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/governor:${SHORT_SHA}
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/runtime:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/chat:${SHORT_SHA}

@@ -3,6 +3,11 @@ output "console_url" {
   value       = local.console_url
 }
 
+output "chat_url" {
+  description = "Demo chat app (IAP sign-in)."
+  value       = local.chat_url
+}
+
 output "governor_url" {
   value = google_cloud_run_v2_service.governor["console"].uri
 }

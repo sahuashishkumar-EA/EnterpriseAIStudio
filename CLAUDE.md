@@ -37,6 +37,13 @@ Everything below is implemented. The original `eap_core` was not available, so i
 - `tests/`: 54 tests (unit, in-process e2e with both apps wired over ASGI, MCP, Postgres 16 + pgvector).
   Run the Postgres tests with `EAP_TEST_PG_DSN=...`.
 
+- Agent Studio (2026-11-05): functional contexts per agent (`FunctionalContext` in schema; composed
+  by `eap_core/compose.py`), technical vs functional section saves with per-section conflict checks,
+  `functional_author` role, friendly functional guardrails (`respond` action: topic_policy, escalation,
+  pii refuse), web scanning into pgvector (`runtime/webscan.py`, SSRF-guarded), live preview, chat
+  history, dev-mode quick publish (`EAP_RELAXED_RELEASE`), model Test button, `services/chat` demo app
+  with delegated identity (`X-EAP-On-Behalf-Of`, `EAP_DELEGATING_SERVICES`). See `docs/studio.md`.
+
 ## Open items
 1. Verify the Vertex model IDs and regional availability for europe-west4, then flip catalog models from
    `preview` to `active` (see `docs/models.md`). Not possible from the build session (docs host blocked).

@@ -1,4 +1,5 @@
-# Local development: Postgres 16 + pgvector, governor (console on :8080), runtime (:8081).
+# Local development: Postgres 16 + pgvector, governor (console on :8080), runtime (:8081),
+# demo chat app (:8082).
 # Dev auth (X-Dev-* headers), mock models, events pushed directly from governor to runtime.
 #   docker compose up --build
 #   python examples/seed.py --governor http://localhost:8080 --runtime http://localhost:8081
@@ -30,6 +31,8 @@ services:
       EAP_EVENTS_PUSH_URLS: http://runtime:8080/internal/v1/events
       EAP_EVENTS_PUSH_DEV_USER: governor
       EAP_BOOTSTRAP_ADMINS: admin@example.com
+      EAP_RELAXED_RELEASE: "true"
+      EAP_CHAT_URL: http://localhost:8082/
 
   runtime:
     build: {context: ., dockerfile: services/runtime/Dockerfile}
@@ -42,6 +45,17 @@ services:
       EAP_GOVERNOR_AUTH: dev
       EAP_CALL_CONTEXT_KEY: local-dev-call-context-key-0123456789abcdef
       EAP_RESOLVER_TTL_S: "30"
+
+  chat:
+    build: {context: ., dockerfile: services/chat/Dockerfile}
+    depends_on: [governor, runtime]
+    ports: ["8082:8080"]
+    environment:
+      EAP_AUTH_MODES: dev
+      EAP_CHAT_DEV_USER: admin@example.com
+      EAP_GOVERNOR_URL: http://governor:8080
+      EAP_RUNTIME_URL: http://runtime:8080
+      EAP_UPSTREAM_AUTH: dev
 
 volumes:
   pgdata:

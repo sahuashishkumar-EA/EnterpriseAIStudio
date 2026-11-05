@@ -12,6 +12,7 @@ locals {
   run_services = {
     governor          = google_cloud_run_v2_service.governor["console"].name
     governor-internal = google_cloud_run_v2_service.governor["internal"].name
+    chat              = google_cloud_run_v2_service.chat.name
     runtime           = google_cloud_run_v2_service.runtime.name
   }
 }

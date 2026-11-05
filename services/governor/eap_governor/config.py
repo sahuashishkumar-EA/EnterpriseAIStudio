@@ -15,7 +15,11 @@ class Settings:
     bootstrap_admins: list[str] = field(default_factory=list)
     seed_catalog: bool = True
     judge_model: str = "mock-small"
-    internal_callers: list[str] = field(default_factory=lambda: ["runtime"])  # logical service names
+    internal_callers: list[str] = field(default_factory=lambda: ["runtime", "chat"])  # logical service names
+    # dev environments only: one person may author, approve and publish (still fully audited)
+    relaxed_release: bool = False
+    web_embedding_model: str = "mock-embedding"
+    chat_url: str = ""  # link to the chat app from the console
     service_name: str = "governor"
     base_url: str = "http://localhost:8080"
 
@@ -30,6 +34,9 @@ class Settings:
             bootstrap_admins=[a for a in e.get("EAP_BOOTSTRAP_ADMINS", "").split(",") if a],
             seed_catalog=e.get("EAP_SEED_CATALOG", "true").lower() == "true",
             judge_model=e.get("EAP_JUDGE_MODEL", "mock-small"),
-            internal_callers=[c for c in e.get("EAP_INTERNAL_CALLERS", "runtime").split(",") if c],
+            internal_callers=[c for c in e.get("EAP_INTERNAL_CALLERS", "runtime,chat").split(",") if c],
+            relaxed_release=e.get("EAP_RELAXED_RELEASE", "false").lower() == "true",
+            web_embedding_model=e.get("EAP_WEB_EMBEDDING_MODEL", "mock-embedding"),
+            chat_url=e.get("EAP_CHAT_URL", ""),
             base_url=e.get("EAP_BASE_URL", "http://localhost:8080"),
         )

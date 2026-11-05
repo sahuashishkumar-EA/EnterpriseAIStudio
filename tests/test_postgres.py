@@ -35,7 +35,7 @@ def test_migrations_apply_on_postgres(pg_dbs):
     from eap_core.db import Database
 
     gov, rt = Database(pg_dbs[0]), Database(pg_dbs[1])
-    assert gov.migrate(ROOT / "services/governor/eap_governor/migrations") == ["001_init.sql", "002_isolate_database.pg.sql"]
+    assert gov.migrate(ROOT / "services/governor/eap_governor/migrations") == ["001_init.sql", "002_isolate_database.pg.sql", "003_studio.sql"]
     assert rt.migrate(ROOT / "services/runtime/eap_runtime/migrations") == ["001_init.sql", "002_pgvector.pg.sql", "003_isolate_database.pg.sql"]
     assert gov.migrate(ROOT / "services/governor/eap_governor/migrations") == []  # idempotent
     cols = {r["column_name"]: r["udt_name"] for r in rt.fetchall(

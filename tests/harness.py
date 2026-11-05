@@ -58,7 +58,9 @@ class Platform:
         return asyncio.run(go())
 
 
-def build(gov_db_url: str = "sqlite://:memory:", rt_db_url: str = "sqlite://:memory:", **rt_overrides: Any) -> Platform:
+def build(gov_db_url: str = "sqlite://:memory:", rt_db_url: str = "sqlite://:memory:", *,
+          gov_overrides: dict[str, Any] | None = None, web_transport: httpx.AsyncBaseTransport | None = None,
+          **rt_overrides: Any) -> Platform:
     to_runtime, to_governor = LazyASGI(), LazyASGI()
     sink_client = httpx.AsyncClient(transport=to_runtime, base_url="http://runtime")
 
@@ -68,10 +70,11 @@ def build(gov_db_url: str = "sqlite://:memory:", rt_db_url: str = "sqlite://:mem
 
     publisher = LocalPublisher(sinks=[push])
     gov_db, rt_db = Database(gov_db_url), Database(rt_db_url)
-    gov = governor_app(GovSettings(database_url=gov_db_url, runtime_url="http://runtime", auth=AuthConfig(modes=["dev"])),
+    gov = governor_app(GovSettings(database_url=gov_db_url, runtime_url="http://runtime", auth=AuthConfig(modes=["dev"]),
+                                   **(gov_overrides or {})),
                        db=gov_db, publisher=publisher, runtime_transport=to_runtime)
     rt_settings = RtSettings(database_url=rt_db_url, governor_url="http://governor", auth=AuthConfig(modes=["dev"]),
                              resolver_ttl_s=rt_overrides.pop("resolver_ttl_s", 300.0), **rt_overrides)
-    rt = runtime_app(rt_settings, db=rt_db, governor_transport=to_governor)
+    rt = runtime_app(rt_settings, db=rt_db, governor_transport=to_governor, web_transport=web_transport)
     to_runtime.app, to_governor.app = rt, gov
     return Platform(gov, rt, publisher, gov_db, rt_db)

@@ -1,6 +1,5 @@
-# Build and push both images only (no tests, no deploy). Used for the first deployment,
-# before the Cloud Run services exist:
-#   gcloud builds submit --config cloudbuild.images.yaml --substitutions=_REPO=eap-dev-images,_TAG=v1
+# Build and push all images only (no tests, no deploy). Used for manual deployments:
+#   gcloud builds submit --config cloudbuild.images.yaml --substitutions=_REPO=eap-dev-images,_TAG=v3
 substitutions:
   _REGION: europe-west4
   _REPO: eap-dev-images
@@ -12,6 +11,11 @@ steps:
     args: ["build", "-f", "services/governor/Dockerfile", "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/governor:${_TAG}", "."]
   - name: gcr.io/cloud-builders/docker
     args: ["build", "-f", "services/runtime/Dockerfile", "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/runtime:${_TAG}", "."]
+    waitFor: ["-"]
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "services/chat/Dockerfile", "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/chat:${_TAG}", "."]
+    waitFor: ["-"]
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/governor:${_TAG}
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/runtime:${_TAG}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/chat:${_TAG}

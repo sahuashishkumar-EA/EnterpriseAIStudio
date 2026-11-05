@@ -9,6 +9,10 @@ locals {
   governor_url          = "https://${local.name}-governor-${local.project_number}.${var.region}.run.app"
   governor_internal_url = "https://${local.name}-governor-internal-${local.project_number}.${var.region}.run.app"
   console_direct        = var.console_access == "cloud_run_iap"
+  chat_url              = "https://${local.name}-chat-${local.project_number}.${var.region}.run.app"
+  relaxed_release       = coalesce(var.relaxed_release, var.environment == "dev")
+  chat_image            = var.chat_image != "" ? var.chat_image : replace(var.governor_image, "/governor:", "/chat:")
+  chat_members          = length(var.chat_access_members) > 0 ? var.chat_access_members : var.console_access_members
   console_url           = local.console_direct ? local.governor_url : "https://${var.console_domain}"
   runtime_url           = "https://${local.name}-runtime-${local.project_number}.${var.region}.run.app"
   labels = {

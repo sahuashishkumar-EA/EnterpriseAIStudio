@@ -47,7 +47,7 @@ def _normalize_case(raw: Any, i: int) -> dict[str, Any]:
         raise DatasetError(f"case {i}: must be an object")
     if "input" not in raw:
         # bare row: everything except reserved keys is input
-        reserved = {"id", "expected", "assertions"}
+        reserved = {"id", "expected", "assertions", "context"}
         raw = {**{k: raw[k] for k in reserved if k in raw}, "input": {k: v for k, v in raw.items() if k not in reserved}}
     inp = raw["input"]
     if isinstance(inp, str):
@@ -60,7 +60,10 @@ def _normalize_case(raw: Any, i: int) -> dict[str, Any]:
     assertions = raw.get("assertions", []) or []
     for a in assertions:
         check_assertion_spec(a, f"case {i}")
-    return {"id": str(raw.get("id") or f"case-{i + 1}"), "input": inp, "expected": expected, "assertions": assertions}
+    case = {"id": str(raw.get("id") or f"case-{i + 1}"), "input": inp, "expected": expected, "assertions": assertions}
+    if raw.get("context"):
+        case["context"] = str(raw["context"])  # functional context to evaluate under
+    return case
 
 
 def parse_dataset(content: str | bytes, fmt: str | None = None, filename: str | None = None) -> list[dict[str, Any]]:
@@ -102,6 +105,9 @@ def parse_dataset(content: str | bytes, fmt: str | None = None, filename: str | 
                 elif k == "expected":
                     val = _maybe_json(v)
                     case["expected"] = val if isinstance(val, dict) else {"value": val}
+                elif k == "context":
+                    if v.strip():
+                        case["context"] = v.strip()
                 elif k == "assertions":
                     case["assertions"] = json.loads(v) if v.strip() else []
                 elif k.startswith("expected."):
@@ -252,7 +258,7 @@ async def run_cases(
             try:
                 result = await runtime.execute(
                     {"release": release, "policy": policy, "input": case["input"], "principal": principal,
-                     "agent": release["definition"]["name"]}
+                     "agent": release["definition"]["name"], "context": case.get("context")}
                 )
             except Exception as e:  # runtime unreachable etc.
                 return {"case_id": case["id"], "passed": False, "status": "error", "error": str(e),

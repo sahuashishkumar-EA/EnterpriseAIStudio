@@ -5,6 +5,7 @@ Two separately deployed services:
 | Service | Role | Talks to |
 |---|---|---|
 | **Governor** (`services/governor`) | Control plane + web console. Authoring and governing agent definitions (context, guardrails, knowledge, model, pattern, eval rules, output format). Draft → validate → eval → approve → publish → alias / canary / rollback. Catalog, policies, audit, dependency graph. | Its own Postgres DB; the runtime only for evals (`/internal/v1/execute`); publishes events to Pub/Sub. |
+| **Chat app** (`services/chat`) | Demo front end: signed-in users chat with published, chat-enabled agents and pick a functional context. | Governor-internal (list agents) and the runtime (invoke, on behalf of the user). |
 | **Agent Runtime** (`services/runtime`) | Data plane. Executes published, immutable agent versions. | Pulls definitions + effective policy from the governor **API** (`/internal/v1/resolve`), never its tables. Its own Postgres DB (runs, budgets, pgvector knowledge). |
 
 `packages/eap_core` holds the shared contracts: the definition schema, the policy model, the signed call context, plugin contracts, the invoke contract, portable SQL, auth, events and tasks.
@@ -15,6 +16,15 @@ Two separately deployed services:
                                 └───────── /internal/v1/resolve/{agent}/{alias}  (TTL + ETag) ◀── Runtime
  callers / MCP clients ─────────────────────────────────────────────▶ Runtime /v1/agents/{name}@{alias}/invoke, /mcp
 ```
+
+## Agent Studio (two personas, many contexts)
+
+Technical and functional experts work on the same agent on separate screens. The technical
+expert owns the system-level context, model, tools and limits. The functional expert owns one
+or more **functional contexts**: role, behaviour, web pages, boundaries, examples. Each
+conversation picks a context. The studio has a live preview against the draft, and a separate
+**chat app** (`services/chat`) talks to published agents on behalf of signed-in users. See
+[`docs/studio.md`](docs/studio.md).
 
 ## Key behaviours
 

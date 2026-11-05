@@ -89,6 +89,16 @@ class Outcome:
     findings: list[Finding] = field(default_factory=list)
 
 
+class PolicyResponse(Exception):
+    """A functional guardrail answered on the agent's behalf (refusal, hand-off, privacy note)."""
+
+    def __init__(self, message: str, kind: str, detail: str = ""):
+        super().__init__(message)
+        self.message = message
+        self.kind = kind
+        self.detail = detail
+
+
 class GuardrailBlocked(Exception):
     def __init__(self, finding: Finding):
         super().__init__(f"{finding.guardrail} blocked at {finding.stage}: {finding.detail}")
@@ -132,7 +142,7 @@ def check_text(guardrail: dict[str, Any], text: str, ctx: dict[str, Any] | None 
 
     def hit(detail: str) -> None:
         out.findings.append(Finding(t, stage, action, detail))
-        if action == "block":
+        if action in ("block", "respond"):
             out.blocked = True
 
     if t == "pii_redaction":
@@ -155,6 +165,11 @@ def check_text(guardrail: dict[str, Any], text: str, ctx: dict[str, Any] | None 
                 else:
                     hit(f"possible prompt injection: {m.group(0)!r}")
                     break
+    elif t in ("topic_policy", "escalation"):
+        for term in params.get("terms") or []:
+            if term.strip() and re.search(rf"\b{re.escape(term.strip())}\b", out.text, re.I):
+                hit(f"matched {term!r}")
+                break
     elif t == "topic_denylist":
         for term in params.get("terms") or []:
             pat = re.compile(rf"\b{re.escape(term)}\b", re.I)
@@ -226,6 +241,10 @@ class Enforcer:
             self.findings += o.findings
             if o.blocked:
                 result.blocked = True
+                if g.get("action") == "respond":
+                    f = o.findings[-1]
+                    msg = (g.get("params") or {}).get("message") or "I can't help with that here."
+                    raise PolicyResponse(msg, g["type"], f.detail)
                 if raise_on_block:
                     raise GuardrailBlocked(next(f for f in o.findings if f.action == "block"))
                 break

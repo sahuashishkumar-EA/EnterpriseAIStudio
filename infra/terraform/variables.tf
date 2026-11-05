@@ -132,9 +132,33 @@ variable "min_instances" {
 }
 
 variable "enable_nat" {
-  description = "Cloud NAT for internet egress (needed only for tools on external hosts)."
+  description = "Cloud NAT for internet egress: needed to scan web pages for functional contexts and for tools on external hosts."
   type        = bool
-  default     = false
+  default     = true
+}
+
+variable "chat_image" {
+  description = "Container image for the demo chat app. Empty = same registry/tag as governor_image with /chat."
+  type        = string
+  default     = ""
+}
+
+variable "chat_access_members" {
+  description = "Who may sign in to the chat app (IAP). Empty = console_access_members."
+  type        = list(string)
+  default     = []
+}
+
+variable "relaxed_release" {
+  description = "Allow one person to author, approve and publish (quick publish). null = true only in dev."
+  type        = bool
+  default     = null
+}
+
+variable "web_embedding_model" {
+  description = "Embedding model for scanned web pages (falls back to mock-embedding if unavailable)."
+  type        = string
+  default     = "text-embedding-005"
 }
 
 variable "tasks_location" {
