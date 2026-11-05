@@ -1,6 +1,6 @@
 resource "google_cloud_tasks_queue" "runtime_runs" {
   name     = "${local.name}-runtime-runs"
-  location = var.region
+  location = var.tasks_location
   rate_limits {
     max_concurrent_dispatches = 50
     max_dispatches_per_second = 20
@@ -16,7 +16,7 @@ resource "google_cloud_tasks_queue" "runtime_runs" {
 
 resource "google_cloud_tasks_queue" "governor_evals" {
   name     = "${local.name}-governor-evals"
-  location = var.region
+  location = var.tasks_location
   rate_limits {
     max_concurrent_dispatches = 10
     max_dispatches_per_second = 5
@@ -30,14 +30,14 @@ resource "google_cloud_tasks_queue" "governor_evals" {
 
 resource "google_cloud_tasks_queue_iam_member" "runtime_enqueuer" {
   name     = google_cloud_tasks_queue.runtime_runs.name
-  location = var.region
+  location = var.tasks_location
   role     = "roles/cloudtasks.enqueuer"
   member   = "serviceAccount:${google_service_account.runtime.email}"
 }
 
 resource "google_cloud_tasks_queue_iam_member" "governor_enqueuer" {
   name     = google_cloud_tasks_queue.governor_evals.name
-  location = var.region
+  location = var.tasks_location
   role     = "roles/cloudtasks.enqueuer"
   member   = "serviceAccount:${google_service_account.governor.email}"
 }

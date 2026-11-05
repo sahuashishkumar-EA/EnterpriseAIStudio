@@ -125,3 +125,9 @@ variable "enable_nat" {
   type        = bool
   default     = false
 }
+
+variable "tasks_location" {
+  description = "Cloud Tasks location. Cloud Tasks is not offered in every region (check `gcloud tasks locations list`); europe-west1 keeps payloads in the EU."
+  type        = string
+  default     = "europe-west1"
+}
