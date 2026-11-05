@@ -42,8 +42,13 @@ Everything below is implemented. The original `eap_core` was not available, so i
    `preview` to `active` (see `docs/models.md`). Not possible from the build session (docs host blocked).
 2. Re-verify MCP 2026-07-28 details against the official spec (secondary sources only). Evaluate A2A
    if external agent interop is needed.
-3. First real `terraform apply` + Cloud Build run in a dev project. Docker images have not been built
-   (no Docker daemon in the build session).
+3. Dev deployment is live (project enterprise-ai-studio-513810, 2026-11-05): images built with
+   `cloudbuild.images.yaml`, Terraform applied, console reachable via IAP on Cloud Run. Lessons:
+   Cloud Tasks is not offered in europe-west4 (queues use `tasks_location`, default europe-west1);
+   projects without an organization need a custom OAuth client set on the Cloud Run IAP settings
+   in the console (Terraform cannot set it) with redirect URI `...clientIds/<id>:handleRedirect`.
+   Still untested on GCP: evals end-to-end, the full `cloudbuild.yaml` CI pipeline, the runtime API
+   from outside the VPC, knowledge ingestion.
 4. Knowledge ingestion trusts the caller-supplied `embedding_model`. Consider resolving it from the
    catalog entry via the governor.
 5. Hardening backlog: OpenTelemetry tracing export, per-agent / per-user rate limits, GCS-backed
