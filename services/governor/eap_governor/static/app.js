@@ -128,7 +128,21 @@ async function viewAgents() {
         h("div", {}, h("button", { class: "primary", onclick: () => act(async () => {
           await api("POST", "/agents", { name: name.value.trim(), owner_bu: bu.value.trim(), description: desc.value });
           location.hash = "#/agents/" + name.value.trim();
-        }) }, "Create")))));
+        }) }, "Create")))),
+    h("div", { class: "panel" }, h("h2", {}, "Import an agent from JSON"),
+      h("p", { class: "muted" }, "Paste or upload a full definition, including functional contexts — e.g. ",
+        h("code", {}, "examples/studio/bank-assistant.json"), ". Name and BU are taken from the JSON."),
+      (() => {
+        const ta = h("textarea", { rows: 6, placeholder: '{"name": "bank-assistant", "owner_bu": "retail", ...}' });
+        const file = h("input", { type: "file", accept: ".json" });
+        file.addEventListener("change", async () => { if (file.files[0]) ta.value = await file.files[0].text(); });
+        return h("div", {}, field("Upload file", file), field("Definition JSON", ta),
+          h("button", { class: "primary", onclick: () => act(async () => {
+            let d; try { d = JSON.parse(ta.value); } catch (e) { throw new Error("Not valid JSON: " + e.message); }
+            await api("POST", "/agents", { name: d.name, owner_bu: d.owner_bu, description: d.description || "", definition: d });
+            toast(`Imported ${d.name}`); location.hash = "#/agents/" + d.name;
+          }) }, "Import"));
+      })()));
 }
 
 const TABS = [["overview", "Overview"], ["studio", "🧑‍💼 Functional studio"], ["technical", "🛠️ Technical setup"],
