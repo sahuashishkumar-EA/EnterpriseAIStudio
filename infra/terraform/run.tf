@@ -76,11 +76,6 @@ locals {
   }
 }
 
-moved {
-  from = google_cloud_run_v2_service.governor
-  to   = google_cloud_run_v2_service.governor["console"]
-}
-
 resource "google_cloud_run_v2_service" "governor" {
   # google-beta: iap_enabled (IAP directly on Cloud Run) is only in the beta provider.
   provider            = google-beta
