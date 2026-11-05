@@ -172,7 +172,7 @@ gcloud run services logs read eap-dev-runtime --region $REGION --limit 30
 Wait until the certificate status is `ACTIVE`:
 
 ```bash
-gcloud compute ssl-certificates describe eap-dev-console --global --format='value(managed.status,managed.domainStatus)'
+gcloud compute ssl-certificates list --global --format='table(name,managed.domains,managed.status)'
 ```
 
 Then open the console:

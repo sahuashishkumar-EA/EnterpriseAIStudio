@@ -13,9 +13,14 @@ resource "google_compute_region_network_endpoint_group" "governor" {
 }
 
 resource "google_compute_managed_ssl_certificate" "console" {
-  name = "${local.name}-console"
+  # Name tracks the domain so a domain change can create the new cert before
+  # detaching the old one (the HTTPS proxy keeps serving during provisioning).
+  name = "${local.name}-console-${substr(md5(var.console_domain), 0, 6)}"
   managed {
     domains = [var.console_domain]
+  }
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
