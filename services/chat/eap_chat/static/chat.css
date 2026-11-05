@@ -50,3 +50,7 @@ button { font: inherit; cursor: pointer; }
   .menu { display: inline-block; border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 8px; padding: 4px 10px; }
   .msg { max-width: 92%; }
 }
+.how { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.how summary { cursor: pointer; }
+.how ol { list-style: none; margin: 6px 0 0; padding: 0 0 0 8px; border-left: 2px solid var(--line); }
+.how li { padding: 2px 0; word-break: break-word; }

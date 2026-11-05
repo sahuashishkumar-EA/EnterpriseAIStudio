@@ -2,6 +2,42 @@
 // with a live preview chat against the (even unsaved) draft and a "what the model sees" view.
 "use strict";
 
+// ------------------------------------------------------------------ orchestration timeline
+
+const STEP_ICON = { guardrail: "🛡️", retrieval: "📚", model: "🧠", tool: "🔧", agent: "🤖", info: "ℹ️" };
+
+function stepLine(st) {
+  const d = st.detail || {};
+  let what = "";
+  if (st.kind === "model") {
+    what = `${st.name} · ${d.input_tokens || 0}→${d.output_tokens || 0} tokens · $${(d.cost_usd || 0).toFixed(5)}`;
+    if (d.tool_calls && d.tool_calls.length) what += ` · decided to call: ${d.tool_calls.join(", ")}`;
+    else if (d.stop_reason) what += ` · ${d.stop_reason === "end" ? "final answer" : d.stop_reason}`;
+    if (d.error) what += ` · ${d.error}`;
+  } else if (st.kind === "tool") {
+    what = `${st.name}(${JSON.stringify(d.arguments || {}).slice(0, 120)}) → ${String(d.result_preview || "").slice(0, 140)}`;
+  } else if (st.kind === "retrieval") {
+    what = `${st.name}: ${d.hits ?? 0} relevant passage(s)` + (d.query ? ` for “${String(d.query).slice(0, 60)}”` : "");
+  } else if (st.kind === "agent") {
+    what = `called agent ${st.name} (depth ${d.depth}) · $${(d.cost_usd || 0).toFixed(5)}`;
+  } else if (st.kind === "guardrail") {
+    what = `${st.name} ${st.status}` + (d.stage ? ` at ${d.stage}` : "") + (d.detail ? ` — ${d.detail}` : "");
+  } else {
+    what = `${st.name} ${JSON.stringify(d).slice(0, 120)}`;
+  }
+  return { icon: STEP_ICON[st.kind] || "•", kind: st.kind, status: st.status, what, ms: st.latency_ms || 0 };
+}
+
+// "How this answer was made": the orchestration of one run, step by step.
+function timelineView(r) {
+  const steps = ((r.trace && r.trace.steps) || []).map(stepLine);
+  const models = steps.filter((x) => x.kind === "model").length, tools = steps.filter((x) => x.kind === "tool").length;
+  const summary = `${steps.length} step(s) · ${models} model call(s) · ${tools} tool call(s) · ${r.latency_ms} ms · $${((r.cost && r.cost.usd) || 0).toFixed(5)}`;
+  return h("details", { class: "timeline" }, h("summary", {}, "How this answer was made ", h("span", { class: "muted" }, summary)),
+    h("ol", {}, steps.map((x) => h("li", { class: "tl-" + x.status }, h("span", { class: "tl-icon" }, x.icon),
+      h("span", { class: "tl-what" }, x.what), h("span", { class: "tl-ms muted" }, x.ms ? `${x.ms} ms` : "")))));
+}
+
 // ------------------------------------------------------------------ small widgets
 
 // Safe minimal markdown for preview bubbles: escape, then **bold**, _italic_, `code`, lists, paragraphs.
@@ -288,8 +324,8 @@ async function tabStudio(agent) {
       const meta = h("div", { class: "bubble-meta" },
         (r.flags || []).map((f) => badge(f, "warn")), " ",
         (r.sources || []).map((s, i) => h("a", { href: s.uri, target: "_blank", rel: "noopener", class: "src" }, `[${i + 1}] ${s.title || s.uri}`)),
-        h("span", { class: "muted small" }, ` · ${r.latency_ms} ms · $${(r.cost && r.cost.usd || 0).toFixed(5)}`),
-        (r.warnings || []).length ? h("div", { class: "muted small" }, r.warnings.join("; ")) : "");
+        (r.warnings || []).length ? h("div", { class: "muted small" }, r.warnings.join("; ")) : "",
+        timelineView(r));
       thinking.replaceWith(bubble("assistant", text, meta));
       history.push({ role: "user", content: msg }, { role: "assistant", content: text });
     } catch (e) { thinking.replaceWith(bubble("assistant", "⚠ " + e.message)); }

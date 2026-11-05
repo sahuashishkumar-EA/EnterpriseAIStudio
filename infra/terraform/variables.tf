@@ -166,3 +166,10 @@ variable "tasks_location" {
   type        = string
   default     = "europe-west1"
 }
+
+variable "google_ai_api_key" {
+  description = "Optional Gemini Developer API key (Google AI Studio). Stored in Secret Manager; enables the google_ai model provider and google_ai embeddings. Pass via TF_VAR_google_ai_api_key."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

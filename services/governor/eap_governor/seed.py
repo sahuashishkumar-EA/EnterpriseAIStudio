@@ -58,6 +58,28 @@ MODELS = [
         "notes": VERIFY,
     },
     {
+        "id": "google-ai-flash",
+        "provider": "google_ai",
+        "model_id": "gemini-2.5-flash",
+        "location": "google-ai",
+        "status": "preview",
+        "capabilities": {"tools": True, "json": True, "context_tokens": 1000000},
+        "pricing": {"input_per_mtok": 0.30, "output_per_mtok": 2.50},
+        "notes": "Gemini Developer API with the runtime's GOOGLE_AI_API_KEY. Click Test; if the model id is "
+                 "unavailable, edit model_id (e.g. gemini-flash-latest). Data handling follows the Gemini API terms "
+                 "(free tier may be used to improve Google products; no EU residency guarantee).",
+    },
+    {
+        "id": "google-ai-pro",
+        "provider": "google_ai",
+        "model_id": "gemini-2.5-pro",
+        "location": "google-ai",
+        "status": "preview",
+        "capabilities": {"tools": True, "json": True, "context_tokens": 1000000},
+        "pricing": {"input_per_mtok": 1.25, "output_per_mtok": 10.00},
+        "notes": "Gemini Developer API (API key). Click Test before activating.",
+    },
+    {
         "id": "claude-opus-5-5-eu",
         "provider": "vertex_claude",
         "model_id": "claude-opus-5-5",

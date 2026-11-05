@@ -136,6 +136,10 @@ def create_app(
             "latency_ms": d.get("latency_ms"), "cost_usd": (d.get("cost") or {}).get("usd"),
             "error": (d.get("error") or {}).get("message") if d.get("error") else None,
             "warnings": d.get("warnings", []),
+            # orchestration trace, shown as "How this answer was made"
+            "steps": [{"kind": s.get("kind"), "name": s.get("name"), "status": s.get("status"),
+                       "latency_ms": s.get("latency_ms"), "detail": s.get("detail", {})}
+                      for s in (d.get("trace") or {}).get("steps", [])],
         })
 
     async def index(request: Request) -> Response:

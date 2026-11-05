@@ -137,3 +137,51 @@ async def test_vertex_urls(monkeypatch):
     assert seen[0][1] == "Bearer tok"
     with pytest.raises(ModelError, match="retired"):
         await reg.generate({"provider": "mock", "status": "retired", "id": "m"}, req)
+
+
+async def test_google_ai_provider_and_thought_signatures(monkeypatch):
+    """Gemini Developer API: API-key header, v1beta endpoint, and thoughtSignature returned
+    unchanged in the functionCall part of the next turn (required by newer Gemini models)."""
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "k-123")
+    seen = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        body = json.loads(req.content)
+        seen.append((str(req.url), req.headers.get("x-goog-api-key"), body))
+        if len(seen) == 1:
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [
+                {"functionCall": {"name": "calculator", "args": {"expression": "2+2"}}, "thoughtSignature": "SIG=="}]},
+                "finishReason": "STOP"}], "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 2}})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "4"}]}}], "usageMetadata": {}})
+
+    reg = ModelRegistry(None, transport=httpx.MockTransport(handler))
+    entry = {"provider": "google_ai", "model_id": "gemini-2.5-flash", "id": "g"}
+    tools = [ToolSpec("calculator", "calc", {"type": "object", "properties": {"expression": {"type": "string"}}})]
+    r1 = await reg.generate(entry, ModelRequest(system="s", messages=[Message("user", "2+2?")], tools=tools))
+    assert r1.tool_calls[0].signature == "SIG=="
+    msgs = [Message("user", "2+2?"), Message("assistant", "", tool_calls=r1.tool_calls),
+            Message("tool", "4", tool_call_id=r1.tool_calls[0].id, name="calculator")]
+    r2 = await reg.generate(entry, ModelRequest(system="s", messages=msgs, tools=tools))
+    assert r2.text == "4"
+    assert seen[0][0] == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    assert seen[0][1] == "k-123"
+    fc_part = seen[1][2]["contents"][1]["parts"][0]
+    assert fc_part["functionCall"]["name"] == "calculator" and fc_part["thoughtSignature"] == "SIG=="
+    monkeypatch.delenv("GOOGLE_AI_API_KEY")
+    with pytest.raises(ModelError, match="GOOGLE_AI_API_KEY"):
+        await reg.generate(entry, ModelRequest(system="s", messages=[Message("user", "x")]))
+
+
+async def test_google_ai_embeddings(monkeypatch):
+    from eap_runtime.knowledge import Embedder
+
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "k")
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        body = json.loads(req.content)
+        assert req.url.path.endswith("/models/gemini-embedding-001:batchEmbedContents")
+        assert body["requests"][0]["outputDimensionality"] == 768
+        return httpx.Response(200, json={"embeddings": [{"values": [0.1] * 768} for _ in body["requests"]]})
+
+    vecs = await Embedder(None, "europe-west4", transport=httpx.MockTransport(handler)).embed(["a", "b"], "google_ai:gemini-embedding-001")
+    assert len(vecs) == 2 and len(vecs[0]) == 768

@@ -39,6 +39,7 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
+    signature: str | None = None  # Gemini thoughtSignature: must be returned unchanged in the same part
 
 
 @dataclass
@@ -131,7 +132,11 @@ class GeminiAdapter(_Vertex):
                 contents.append({"role": "user", "parts": [{"text": m.content}]})
             elif m.role == "assistant":
                 parts: list[dict[str, Any]] = [{"text": m.content}] if m.content else []
-                parts += [{"functionCall": {"name": c.name, "args": c.arguments}} for c in m.tool_calls]
+                for c in m.tool_calls:
+                    part: dict[str, Any] = {"functionCall": {"name": c.name, "args": c.arguments}}
+                    if c.signature:
+                        part["thoughtSignature"] = c.signature
+                    parts.append(part)
                 contents.append({"role": "model", "parts": parts})
             elif m.role == "tool":
                 part = {"functionResponse": {"name": m.name, "response": {"content": m.content, "is_error": m.is_error}}}
@@ -181,7 +186,8 @@ class GeminiAdapter(_Vertex):
                 texts.append(p["text"])
             if "functionCall" in p:
                 fc = p["functionCall"]
-                calls.append(ToolCall(id=uuid.uuid4().hex[:12], name=fc["name"], arguments=fc.get("args") or {}))
+                calls.append(ToolCall(id=uuid.uuid4().hex[:12], name=fc["name"], arguments=fc.get("args") or {},
+                                      signature=p.get("thoughtSignature")))
         fr = c.get("finishReason", "STOP")
         stop = {"MAX_TOKENS": "max_tokens", "SAFETY": "refusal", "PROHIBITED_CONTENT": "refusal",
                 "BLOCKLIST": "refusal", "SPII": "refusal"}.get(fr, "tool_use" if calls else "end")
@@ -194,6 +200,29 @@ class GeminiAdapter(_Vertex):
             stop_reason=stop,
             model=entry["model_id"],
         )
+
+
+class GoogleAIAdapter(GeminiAdapter):
+    """Gemini Developer API (Google AI Studio API key) - same request/response shape as Vertex
+    generateContent, different endpoint and auth. Key from env GOOGLE_AI_API_KEY (Secret Manager
+    on Cloud Run). Note: data handling and residency follow the Gemini API terms, not Vertex AI's."""
+
+    BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+    async def generate(self, entry: dict[str, Any], req: ModelRequest) -> ModelResponse:
+        import os
+
+        key = os.environ.get("GOOGLE_AI_API_KEY", "")
+        if not key:
+            raise ModelError("GOOGLE_AI_API_KEY is not configured on the runtime")
+        base = (entry.get("params") or {}).get("endpoint") or self.BASE
+        r = await self.client.post(f"{base}/models/{entry['model_id']}:generateContent",
+                                   json=self.build(entry, req), headers={"x-goog-api-key": key})
+        if r.status_code in (429, 500, 502, 503, 504):
+            raise ModelError(f"google ai {r.status_code}: {r.text[:300]}", retryable=True, status=r.status_code)
+        if r.status_code >= 400:
+            raise ModelError(f"google ai {r.status_code}: {r.text[:500]}", status=r.status_code)
+        return self.parse(entry, r.json())
 
 
 class ClaudeAdapter(_Vertex):
@@ -390,6 +419,7 @@ class ModelRegistry:
             "mock": MockAdapter(),
             "vertex_gemini": GeminiAdapter(project, self.client),
             "vertex_claude": ClaudeAdapter(project, self.client),
+            "google_ai": GoogleAIAdapter(project, self.client),
         }
 
     async def generate(self, entry: dict[str, Any], req: ModelRequest) -> ModelResponse:

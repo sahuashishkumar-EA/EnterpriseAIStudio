@@ -72,6 +72,22 @@ class Embedder:
     async def embed(self, texts: list[str], model: str, task: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
         if model == "mock-embedding":
             return [mock_embed(t) for t in texts]
+        if model.startswith("google_ai:"):  # Gemini Developer API (API key)
+            import os
+
+            key = os.environ.get("GOOGLE_AI_API_KEY", "")
+            if not key:
+                raise RuntimeError("GOOGLE_AI_API_KEY is not configured")
+            name = model.split(":", 1)[1]
+            out: list[list[float]] = []
+            for i in range(0, len(texts), 50):
+                body = {"requests": [{"model": f"models/{name}", "content": {"parts": [{"text": t[:8000]}]},
+                                      "taskType": task, "outputDimensionality": DIM} for t in texts[i:i + 50]]}
+                r = await self.client.post(f"https://generativelanguage.googleapis.com/v1beta/models/{name}:batchEmbedContents",
+                                           json=body, headers={"x-goog-api-key": key})
+                r.raise_for_status()
+                out += [e["values"] for e in r.json()["embeddings"]]
+            return out
         project = self.project or await gcp.project_id()
         url = (f"https://{self.location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{self.location}"
                f"/publishers/google/models/{model}:predict")

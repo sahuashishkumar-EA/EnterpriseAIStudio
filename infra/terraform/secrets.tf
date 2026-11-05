@@ -50,3 +50,38 @@ resource "google_secret_manager_secret_iam_member" "access" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${each.value.member}"
 }
+
+# Optional Gemini Developer API key (only the runtime can read it)
+locals {
+  google_ai = nonsensitive(var.google_ai_api_key != "")
+}
+
+resource "google_secret_manager_secret" "google_ai" {
+  count     = local.google_ai ? 1 : 0
+  secret_id = "${local.name}-google-ai-api-key"
+  labels    = local.labels
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+        customer_managed_encryption {
+          kms_key_name = google_kms_crypto_key.secrets.id
+        }
+      }
+    }
+  }
+  depends_on = [google_kms_crypto_key_iam_member.secrets]
+}
+
+resource "google_secret_manager_secret_version" "google_ai" {
+  count       = local.google_ai ? 1 : 0
+  secret      = google_secret_manager_secret.google_ai[0].id
+  secret_data = var.google_ai_api_key
+}
+
+resource "google_secret_manager_secret_iam_member" "google_ai_runtime" {
+  count     = local.google_ai ? 1 : 0
+  secret_id = google_secret_manager_secret.google_ai[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runtime.email}"
+}

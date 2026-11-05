@@ -15,7 +15,7 @@ locals {
     EAP_SERVICE_ACCOUNTS      = local.service_accounts
     EAP_INTERNAL_CALLERS      = "runtime,chat"
     EAP_RELAXED_RELEASE       = tostring(local.relaxed_release)
-    EAP_WEB_EMBEDDING_MODEL   = var.web_embedding_model
+    EAP_WEB_EMBEDDING_MODEL   = local.google_ai ? "google_ai:gemini-embedding-001" : var.web_embedding_model
     EAP_CHAT_URL              = local.chat_url
     EAP_RUNTIME_URL           = local.runtime_url
     EAP_RUNTIME_AUTH          = "google_id"
@@ -191,6 +191,18 @@ resource "google_cloud_run_v2_service" "runtime" {
           }
         }
       }
+      dynamic "env" {
+        for_each = local.google_ai ? [1] : []
+        content {
+          name = "GOOGLE_AI_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.google_ai[0].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
       env {
         name = "EAP_CALL_CONTEXT_KEY"
         value_source {
@@ -211,7 +223,8 @@ resource "google_cloud_run_v2_service" "runtime" {
     }
   }
 
-  depends_on = [google_secret_manager_secret_iam_member.access, google_sql_database.db]
+  depends_on = [google_secret_manager_secret_iam_member.access, google_sql_database.db,
+  google_secret_manager_secret_version.google_ai, google_secret_manager_secret_iam_member.google_ai_runtime]
 }
 
 # ------------------------------------------------------------ who may call whom

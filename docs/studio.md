@@ -76,6 +76,30 @@ It calls the runtime with its own service account plus `X-EAP-On-Behalf-Of: <sig
 The runtime only accepts that header from delegating services (`EAP_DELEGATING_SERVICES=chat`),
 and only for chat-enabled agents. Runs are recorded on behalf of the end user.
 
+## Gemini API with your own key (Google AI Studio)
+
+Besides Vertex AI, the runtime can call the **Gemini Developer API**
+(`generativelanguage.googleapis.com`) with an API key from Google AI Studio (provider
+`google_ai`, catalog entries `google-ai-flash` / `google-ai-pro`). The key goes into Secret
+Manager through Terraform (`TF_VAR_google_ai_api_key`), and only the runtime can read it. When
+a key is set, scanned web pages are embedded with `gemini-embedding-001` through the same key.
+Thought signatures returned with function calls are passed back unchanged, as newer Gemini
+models require.
+
+A consumer Google AI Pro/Ultra subscription covers the Gemini app, not API usage. API calls use
+the key's free tier, or paid billing on its Cloud project. Data handling follows the Gemini API
+terms (the free tier may be used to improve Google products) and there is no EU data-residency
+guarantee. Use Vertex AI for that.
+
+## Seeing the orchestration
+
+Every answer in the studio's live preview and in the chat app has **How this answer was made**:
+the run's steps in order, e.g. guardrails, retrieval (with hit counts), each model call (model,
+tokens, cost, and whether it chose to call tools), each tool call with its arguments and result,
+and any child agents. The `bank-assistant` example uses the `research_loop` pattern with a
+`calculator` tool, so a question like *"monthly payment on 300000 EUR over 20 years at 3.7%?"*
+shows the model calling the calculator, then answering.
+
 ## Using a real model
 
 Catalog → model → **Test** sends a tiny request through the runtime. If it answers, set the

@@ -269,6 +269,13 @@ _SPECS: list[PluginSpec] = [
         "Anthropic Messages API via Vertex rawPredict.",
         _obj({"location": _STR, "model_id": _STR, "endpoint": _STR, "anthropic_version": _STR}, ["model_id"]),
     ),
+    PluginSpec(
+        "model_provider",
+        "google_ai",
+        "Gemini API (Google AI Studio key)",
+        "generateContent on generativelanguage.googleapis.com with an API key (GOOGLE_AI_API_KEY on the runtime).",
+        _obj({"model_id": _STR, "location": _STR, "endpoint": _STR}, ["model_id"]),
+    ),
     PluginSpec("model_provider", "mock", "Mock model", "Deterministic local model for dev/tests.", _obj({"model_id": _STR})),
     # ----------------------------------------------------------- eval assertions
     PluginSpec("assertion", "status", "Status equals", "Run status equals value.", _obj({"equals": {"enum": ["ok", "partial", "failed", "needs_input"]}}, ["equals"])),

@@ -42,6 +42,7 @@ def test_chat_app_end_to_end():
         r = c.post("/api/chat", headers=USER, json={"agent": "helpdesk", "context": "staff", "message": "My laptop is slow",
                                                     "history": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "Hello"}]}).json()
         assert r["status"] == "ok" and r["context"] == "staff" and r["version"] == "1.0.0" and r["reply"]
+        assert any(s["kind"] == "model" for s in r["steps"])  # orchestration trace for "How this answer was made"
         esc = c.post("/api/chat", headers=USER, json={"agent": "helpdesk", "context": "staff", "message": "this is urgent"}).json()
         assert esc["reply"] == "Paging the on-call engineer." and "escalated" in esc["flags"]
         v = c.post("/api/chat", headers=USER, json={"agent": "helpdesk", "context": "visitors", "message": "this is urgent"}).json()

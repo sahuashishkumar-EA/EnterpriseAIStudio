@@ -43,6 +43,23 @@ async function api(method, path, body) {
   return data;
 }
 
+const ICON = { guardrail: "🛡️", retrieval: "📚", model: "🧠", tool: "🔧", agent: "🤖" };
+function stepText(st) {
+  const d = st.detail || {};
+  if (st.kind === "model") return `${st.name}: ${d.input_tokens || 0}→${d.output_tokens || 0} tokens` +
+    (d.tool_calls && d.tool_calls.length ? ` · decided to call ${d.tool_calls.join(", ")}` : " · answered") + (d.error ? ` · ${d.error}` : "");
+  if (st.kind === "tool") return `${st.name}(${JSON.stringify(d.arguments || {}).slice(0, 100)}) → ${String(d.result_preview || "").slice(0, 120)}`;
+  if (st.kind === "retrieval") return `searched ${st.name}: ${d.hits ?? 0} passage(s)`;
+  if (st.kind === "agent") return `called agent ${st.name}`;
+  if (st.kind === "guardrail") return `${st.name} ${st.status}${d.stage ? " at " + d.stage : ""}`;
+  return st.name;
+}
+function timeline(r) {
+  if (!r.steps || !r.steps.length) return null;
+  return el("details", { class: "how" }, el("summary", {}, `How this answer was made · ${r.steps.length} step(s)`),
+    el("ol", {}, ...r.steps.map((st) => el("li", {}, `${ICON[st.kind] || "•"} ${stepText(st)}`, st.latency_ms ? el("span", { class: "muted" }, ` · ${st.latency_ms} ms`) : null))));
+}
+
 function renderAgents() {
   const box = $("agents");
   if (!state.agents.length) { box.replaceChildren(el("p", { class: "muted small" }, "No chat-enabled agents are published to prod yet.")); return; }
@@ -83,7 +100,7 @@ async function send(text) {
     const bubble = el("div", { class: "msg bot" }, md(text),
       el("div", { class: "meta" },
         ...r.sources.map((s, i) => el("a", { href: s.uri, target: "_blank", rel: "noopener" }, `[${i + 1}] ${s.title || s.uri}`)),
-        el("span", {}, `v${r.version} · ${r.latency_ms} ms`)));
+        el("span", {}, `v${r.version} · ${r.latency_ms} ms`)), timeline(r));
     typing.replaceWith(bubble);
     if (r.flags.includes("escalated")) log.append(el("div", { class: "msg notice" }, "🙋 This conversation was flagged for a human colleague."));
     state.history.push({ role: "user", content: msg }, { role: "assistant", content: text });
