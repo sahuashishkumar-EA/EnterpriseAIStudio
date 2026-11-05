@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "name": "entity-resolver",
+  "description": "Resolves a customer reference to the golden customer record using the customer master knowledge base.",
+  "owner_bu": "customer-data",
+  "data_classification": "confidential",
+  "contract": {
+    "description": "Resolve a customer reference (id and/or name) to a golden record.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "customer_id": {"type": "string", "description": "Customer id, e.g. C-1001"},
+        "name": {"type": "string"}
+      },
+      "required": ["customer_id"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "customer_id": {"type": "string"},
+        "matched_name": {"type": "string"},
+        "confidence": {"type": "number"}
+      },
+      "required": ["customer_id", "confidence"]
+    }
+  },
+  "prompt": {
+    "system": "You resolve customer references against the customer master data. Only use the provided sources.",
+    "instructions": "Return the best matching golden record id, its name and a confidence between 0 and 1."
+  },
+  "model": {"catalog_id": "mock-small", "params": {"max_output_tokens": 1024}},
+  "pattern": {"type": "rag", "params": {"max_context_chars": 6000}},
+  "bindings": {"knowledge": [{"ref": "customer-master", "top_k": 3}]},
+  "guardrails": [
+    {"type": "pii_redaction", "stage": "output", "action": "redact", "params": {"entities": ["email", "phone"]}}
+  ],
+  "limits": {"max_cost_usd": 0.25, "max_latency_ms": 30000},
+  "output": {"format": "json", "require_citations": true},
+  "exposure": {"mcp": true, "callable_by_agents": true, "invokers": ["owner_bu", "bu:retail"]},
+  "tags": ["example", "customer"]
+}

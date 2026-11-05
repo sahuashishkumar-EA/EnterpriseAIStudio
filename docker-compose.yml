@@ -1,0 +1,47 @@
+# Local development: Postgres 16 + pgvector, governor (console on :8080), runtime (:8081).
+# Dev auth (X-Dev-* headers), mock models, events pushed directly from governor to runtime.
+#   docker compose up --build
+#   python examples/seed.py --governor http://localhost:8080 --runtime http://localhost:8081
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: eap
+      POSTGRES_PASSWORD: eap
+      POSTGRES_DB: postgres
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/local/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eap"]
+      interval: 2s
+      retries: 30
+
+  governor:
+    build: {context: ., dockerfile: services/governor/Dockerfile}
+    depends_on: {postgres: {condition: service_healthy}}
+    ports: ["8080:8080"]
+    environment:
+      DATABASE_URL: postgresql://governor:governor@postgres:5432/governor
+      EAP_AUTH_MODES: dev
+      EAP_RUNTIME_URL: http://runtime:8080
+      EAP_RUNTIME_AUTH: dev
+      EAP_EVENTS_PUSH_URLS: http://runtime:8080/internal/v1/events
+      EAP_EVENTS_PUSH_DEV_USER: governor
+      EAP_BOOTSTRAP_ADMINS: admin@example.com
+
+  runtime:
+    build: {context: ., dockerfile: services/runtime/Dockerfile}
+    depends_on: {postgres: {condition: service_healthy}}
+    ports: ["8081:8080"]
+    environment:
+      DATABASE_URL: postgresql://runtime:runtime@postgres:5432/runtime
+      EAP_AUTH_MODES: dev
+      EAP_GOVERNOR_URL: http://governor:8080
+      EAP_GOVERNOR_AUTH: dev
+      EAP_CALL_CONTEXT_KEY: local-dev-call-context-key-0123456789abcdef
+      EAP_RESOLVER_TTL_S: "30"
+
+volumes:
+  pgdata:

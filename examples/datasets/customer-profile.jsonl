@@ -1,0 +1,2 @@
+{"id": "premium", "input": {"customer_id": "C-1001"}, "expected": {"name": "Anna de Vries", "segment": "premium"}, "assertions": [{"type": "equals", "path": "output.name", "value_from": "expected.name"}, {"type": "equals", "path": "output.segment", "value_from": "expected.segment"}]}
+{"id": "smb", "input": {"customer_id": "C-1003"}, "expected": {"name": "Sofia Rossi", "segment": "smb"}, "assertions": [{"type": "equals", "path": "output.segment", "value_from": "expected.segment"}]}

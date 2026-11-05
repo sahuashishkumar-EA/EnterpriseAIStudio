@@ -1,0 +1,12 @@
+project_id             = "my-eap-dev" # one project per environment
+environment            = "dev"
+region                 = "europe-west4"
+governor_image         = "europe-west4-docker.pkg.dev/my-eap-dev/eap-dev-images/governor:latest"
+runtime_image          = "europe-west4-docker.pkg.dev/my-eap-dev/eap-dev-images/runtime:latest"
+console_domain         = "agents-dev.example.com"
+console_access_members = ["group:agent-builders@example.com"]
+bootstrap_admins       = ["platform-admin@example.com"]
+db_tier                = "db-custom-1-3840"
+db_high_availability   = false
+deletion_protection    = false
+min_instances          = 0

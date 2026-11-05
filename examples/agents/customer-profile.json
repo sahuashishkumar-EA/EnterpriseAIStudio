@@ -1,0 +1,44 @@
+{
+  "schema_version": "1",
+  "name": "customer-profile",
+  "description": "Builds a 360 customer profile by calling the CRM tool and the entity-resolver agent.",
+  "owner_bu": "retail",
+  "data_classification": "confidential",
+  "contract": {
+    "description": "Customer 360 profile for a customer id.",
+    "input_schema": {
+      "type": "object",
+      "properties": {"customer_id": {"type": "string"}},
+      "required": ["customer_id"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "customer_id": {"type": "string"},
+        "name": {"type": "string"},
+        "segment": {"type": "string"},
+        "lifetime_value_eur": {"type": "number"},
+        "summary": {"type": "string"}
+      },
+      "required": ["customer_id", "name", "segment", "summary"]
+    }
+  },
+  "prompt": {
+    "system": "You are a retail customer-insight assistant. Build a concise, factual customer profile.",
+    "instructions": "Look the customer up in the CRM and resolve the golden record with the entity-resolver agent. Never invent values.",
+    "context": [{"title": "Segments", "text": "Segments are premium, standard and smb."}]
+  },
+  "model": {"catalog_id": "mock-small", "fallbacks": ["mock-large"]},
+  "pattern": {"type": "research_loop", "params": {"max_iterations": 4, "parallel_tool_calls": true}},
+  "bindings": {
+    "tools": [{"ref": "crm-lookup"}],
+    "agents": [{"name": "entity-resolver", "alias": "prod", "description": "Resolve the golden customer record"}]
+  },
+  "guardrails": [
+    {"type": "topic_denylist", "stage": "input", "action": "block", "params": {"terms": ["password"]}}
+  ],
+  "limits": {"max_cost_usd": 1.0, "max_tool_calls": 10, "max_latency_ms": 60000},
+  "output": {"format": "json"},
+  "exposure": {"mcp": true, "callable_by_agents": true},
+  "tags": ["example", "orchestrator"]
+}

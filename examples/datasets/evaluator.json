@@ -1,0 +1,4 @@
+[
+  {"id": "good-answer", "input": {"question": "What is 2+2?", "answer": "4", "rubric": "Correct arithmetic"}},
+  {"id": "bad-answer", "input": {"question": "Capital of NL?", "answer": "Amsterdam", "rubric": "Names the capital"}}
+]

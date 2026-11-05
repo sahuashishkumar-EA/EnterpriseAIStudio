@@ -1,0 +1,21 @@
+[project]
+name = "eap-core"
+version = "0.1.0"
+description = "Shared contracts for the Enterprise Agent Platform (schema, policy, call context, plugins, db, auth, events)"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.6",
+  "PyJWT[crypto]>=2.8",
+  "httpx>=0.27",
+  "jsonschema>=4.21",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["eap_core"]

@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "name": "evaluator",
+  "description": "Scores an answer against a rubric (LLM-as-judge) for quality reviews.",
+  "owner_bu": "platform-quality",
+  "data_classification": "internal",
+  "contract": {
+    "description": "Judge an answer.",
+    "input_schema": {
+      "type": "object",
+      "properties": {"question": {"type": "string"}, "answer": {"type": "string"}, "rubric": {"type": "string"}},
+      "required": ["answer", "rubric"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "score": {"type": "number"},
+        "verdict": {"enum": ["pass", "fail"]},
+        "reasons": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["score", "verdict", "reasons"]
+    }
+  },
+  "prompt": {"system": "You are a strict, fair evaluator. Score from 0 to 1 and justify briefly."},
+  "model": {"catalog_id": "mock-large"},
+  "pattern": {"type": "single_shot"},
+  "limits": {"max_cost_usd": 0.2},
+  "output": {"format": "json"},
+  "exposure": {"mcp": false, "callable_by_agents": true, "invokers": ["authenticated"]},
+  "tags": ["example", "quality"]
+}

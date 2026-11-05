@@ -1,0 +1,16 @@
+project_id             = "my-eap-prod"
+environment            = "prod"
+region                 = "europe-west4"
+governor_image         = "europe-west4-docker.pkg.dev/my-eap-prod/eap-prod-images/governor:REPLACE_WITH_DIGEST"
+runtime_image          = "europe-west4-docker.pkg.dev/my-eap-prod/eap-prod-images/runtime:REPLACE_WITH_DIGEST"
+console_domain         = "agents.example.com"
+console_access_members = ["group:agent-builders@example.com", "group:agent-approvers@example.com"]
+bootstrap_admins       = ["platform-admin@example.com"]
+runtime_invokers       = [] # e.g. ["serviceAccount:crm-backend@my-crm-prod.iam.gserviceaccount.com"]
+oidc_issuer            = "" # e.g. "https://login.example.com" for end-user tokens
+oidc_audience          = ""
+db_tier                = "db-custom-4-15360"
+db_high_availability   = true
+deletion_protection    = true
+min_instances          = 1
+alert_email            = "agent-platform-oncall@example.com"
