@@ -57,5 +57,47 @@ services:
       EAP_RUNTIME_URL: http://runtime:8080
       EAP_UPSTREAM_AUTH: dev
 
+  # ---- configuration-first platform (spec v1.0): docker compose --profile config up --build
+  registry:
+    profiles: ["config"]
+    build: {context: ., dockerfile: services/launcher/Dockerfile}
+    depends_on: {postgres: {condition: service_healthy}, opa: {condition: service_started}}
+    ports: ["8090:8080"]
+    environment:
+      EAP_SERVICE: registry
+      DATABASE_URL: postgresql://registry_owner:registry@postgres:5432/registry?options=-csearch_path%3Dregistry,public
+      EAP_AUTH_MODES: dev
+      EAP_OPA_URL: http://opa:8181
+      EAP_EVENTS_PUSH_URLS: http://resolver:8080/internal/v1/events
+      EAP_EVENTS_PUSH_DEV_USER: pubsub-push
+      EAP_AUDIT_DIR: /tmp/eap-audit
+      EAP_SECRET_MOCK_PLATFORM_TOKEN: local-dev-token
+      EAP_MOCK_STATE_FILE: /tmp/eap-mock-platform.json
+
+  resolver:
+    profiles: ["config"]
+    build: {context: ., dockerfile: services/launcher/Dockerfile}
+    depends_on: [registry, valkey]
+    ports: ["8091:8080"]
+    environment:
+      EAP_SERVICE: resolver
+      EAP_AUTH_MODES: dev
+      EAP_REGISTRY_URL: http://registry:8080
+      EAP_REGISTRY_AUTH: dev
+      EAP_VALKEY_URL: redis://valkey:6379/0
+      EAP_LKG_DIR: /tmp/eap-lkg
+
+  opa:
+    profiles: ["config"]
+    image: openpolicyagent/opa:latest-static
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies"]
+    volumes: ["./policies:/policies:ro"]
+    ports: ["8181:8181"]
+
+  valkey:
+    profiles: ["config"]
+    image: valkey/valkey:8
+    ports: ["6379:6379"]
+
 volumes:
   pgdata:

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/contract.schema.json",
+  "title": "Contract",
+  "type": "object",
+  "x-artifact-type": "contract",
+  "x-schema-version": "1.0.0",
+  "x-lane": "cold",
+  "x-editors": [
+    "architect"
+  ],
+  "x-approvers": [
+    "architect"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "inputSchema": {
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    },
+    "errorSchema": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "inputSchema",
+    "outputSchema"
+  ]
+}

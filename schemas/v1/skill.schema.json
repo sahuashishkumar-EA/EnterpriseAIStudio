@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/skill.schema.json",
+  "title": "Skill (Agent Skills format)",
+  "type": "object",
+  "x-artifact-type": "skill",
+  "x-schema-version": "1.0.0",
+  "x-lane": "hot",
+  "x-editors": [
+    "domain_expert"
+  ],
+  "x-approvers": [
+    "domain_expert"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,62}$"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "instructions": {
+      "type": "string",
+      "maxLength": 20000,
+      "description": "SKILL.md body"
+    },
+    "resources": {
+      "type": "array",
+      "x-lane": "cold",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "uri"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "uri": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "toolsUsed": {
+      "type": "array",
+      "x-lane": "cold",
+      "items": {
+        "type": "string",
+        "x-ref": "tool_def"
+      }
+    },
+    "owner": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "instructions",
+    "owner"
+  ]
+}

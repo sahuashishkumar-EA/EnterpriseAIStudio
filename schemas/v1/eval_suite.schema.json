@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/eval_suite.schema.json",
+  "title": "Evaluation suite",
+  "type": "object",
+  "x-artifact-type": "eval_suite",
+  "x-schema-version": "1.0.0",
+  "x-lane": "hot",
+  "x-editors": [
+    "domain_expert",
+    "qa"
+  ],
+  "x-approvers": [
+    "domain_expert"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "metrics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scoringMethod": {
+      "type": "string",
+      "enum": [
+        "assertions",
+        "rubric",
+        "llm_judge",
+        "platform"
+      ]
+    },
+    "passCriteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minPassRate"
+      ],
+      "properties": {
+        "minPassRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "maxRegression": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "input"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "input": {
+            "type": "string"
+          },
+          "expect": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "contains": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "notContains": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "maxLength": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "scoringMethod",
+    "passCriteria",
+    "cases"
+  ]
+}

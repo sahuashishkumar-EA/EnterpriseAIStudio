@@ -18,9 +18,10 @@ import base64
 import json
 import logging
 import uuid
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-import httpx
+if TYPE_CHECKING:  # pragma: no cover
+    import httpx
 from pydantic import BaseModel, Field
 
 from .db import now_iso
@@ -119,6 +120,8 @@ class LocalPublisher(Publisher):
                 if self.client is not None:
                     await self.client.post(url, json=push_envelope(event), headers=self.headers)
                 else:
+                    import httpx
+
                     async with httpx.AsyncClient(timeout=10) as c:
                         await c.post(url, json=push_envelope(event), headers=self.headers)
             except Exception:

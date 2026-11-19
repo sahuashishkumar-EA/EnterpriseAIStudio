@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/identity_ref.schema.json",
+  "title": "Agent identity reference",
+  "type": "object",
+  "x-artifact-type": "identity_ref",
+  "x-schema-version": "1.0.0",
+  "x-lane": "cold",
+  "x-editors": [
+    "security"
+  ],
+  "x-approvers": [
+    "security"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "identityId": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string",
+      "enum": [
+        "agent_identity",
+        "service_account",
+        "workload_identity"
+      ]
+    },
+    "permissionScopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "identityId",
+    "provider"
+  ]
+}

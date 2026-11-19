@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/tool_def.schema.json",
+  "title": "Tool definition (MCP)",
+  "type": "object",
+  "x-artifact-type": "tool_def",
+  "x-schema-version": "1.0.0",
+  "x-lane": "cold",
+  "x-editors": [
+    "domain_expert",
+    "security"
+  ],
+  "x-approvers": [
+    "security"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "mcpServerId": {
+      "type": "string"
+    },
+    "toolName": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_\\-]{1,64}$"
+    },
+    "description": {
+      "type": "string"
+    },
+    "endpoint": {
+      "type": "string",
+      "format": "uri"
+    },
+    "inputSchema": {
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "thresholdKeys": {
+      "type": "array",
+      "description": "Threshold names the server enforces (C12-F2)",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "mcpServerId",
+    "toolName",
+    "inputSchema"
+  ]
+}

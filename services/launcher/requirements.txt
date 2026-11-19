@@ -1,0 +1,15 @@
+# Runtime dependencies of the configuration-plane and runtime-path services (one image).
+starlette>=0.40
+uvicorn[standard]>=0.30
+pydantic>=2.7
+jsonschema>=4.22
+referencing>=0.35
+pyjwt[crypto]>=2.8
+httpx>=0.27
+anyio>=4.4
+psycopg[binary]>=3.2
+mcp>=2.3,<3
+opentelemetry-api>=1.25
+opentelemetry-sdk>=1.25
+opentelemetry-exporter-otlp>=1.25
+redis>=5.0

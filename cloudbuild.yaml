@@ -31,7 +31,7 @@ steps:
       - -c
       - |
         set -euo pipefail
-        pip install -q ./packages/eap_core[postgres] ./services/governor ./services/runtime ./services/chat pytest pytest-asyncio
+        pip install -q ./packages/eap_core[postgres] ./services/governor ./services/runtime ./services/chat pytest pytest-asyncio -r services/launcher/requirements.txt
         for i in $(seq 1 30); do python -c "import psycopg; psycopg.connect('$${EAP_TEST_PG_DSN}').close()" && break; sleep 2; done
         python -m pytest -q
 

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/model_policy.schema.json",
+  "title": "Model policy",
+  "type": "object",
+  "x-artifact-type": "model_policy",
+  "x-schema-version": "1.0.0",
+  "x-lane": "hot",
+  "x-editors": [
+    "platform"
+  ],
+  "x-approvers": [
+    "platform"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "approvedTiers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "small",
+          "standard",
+          "large"
+        ]
+      }
+    },
+    "defaultTier": {
+      "type": "string",
+      "enum": [
+        "small",
+        "standard",
+        "large"
+      ]
+    },
+    "fallbackTier": {
+      "type": "string",
+      "enum": [
+        "small",
+        "standard",
+        "large"
+      ]
+    },
+    "usageLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxTokensPerRun": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxCostUsdPerRun": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    }
+  },
+  "required": [
+    "approvedTiers",
+    "defaultTier"
+  ]
+}

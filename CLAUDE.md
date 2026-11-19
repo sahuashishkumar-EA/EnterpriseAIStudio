@@ -44,6 +44,22 @@ Everything below is implemented. The original `eap_core` was not available, so i
   history, dev-mode quick publish (`EAP_RELAXED_RELEASE`), model Test button, `services/chat` demo app
   with delegated identity (`X-EAP-On-Behalf-Of`, `EAP_DELEGATING_SERVICES`). See `docs/studio.md`.
 
+## Configuration-first platform (spec v1.0, 2026-11-19)
+Build input: `AGENT_PLATFORM_BUILD_SPEC.md` v1.0 (Ashish Kumar Sahu). Design: "Configuration-First
+Agent Platform on GCP — Re-engineering Design" (Claude doc). Notes and runbook: `docs/config-platform.md`.
+Deviations are ADRs in `docs/adr/` (001 hybrid stack: Python back end, React/TS console, Python+TS SDK).
+
+- Phase 1 slice built: C01 (`schemas/v1`, `packages/eap_metamodel`), C04 (`db/migrations`, append-only
+  by trigger + privileges), C03 (`services/registry-api`), C05/C11 (`services/workflow`), C06
+  (`services/eval-runner`), C07 (`services/resolver`), C09 (`sdk/python`, `sdk/ts`), C10 (`services/compiler`,
+  mock adapter), C12 (`templates/mcp-server`), policies (`policies/`), C08 started. Phase 1 acceptance
+  tests 1-10 pass in `tests/e2e/test_phase1.py` (test 6 also against PostgreSQL 16).
+- Not yet: React console (C02), OTel export wiring, real Agent Platform adapter, `terraform validate`
+  of `infra/terraform/config_platform.tf` (behind `enable_config_platform`, default false), governor data migration.
+- The governor and runtime keep working unchanged; the runtime becomes the reference pro-code agent
+  reading config through C09.
+- Requirement IDs (e.g. `C03-F2`) go in code comments, test names and commit messages.
+
 ## Open items
 1. Verify the Vertex model IDs and regional availability for europe-west4, then flip catalog models from
    `preview` to `active` (see `docs/models.md`). Not possible from the build session (docs host blocked).
@@ -63,6 +79,10 @@ Everything below is implemented. The original `eap_core` was not available, so i
 
 ## Conventions
 - The runtime and governor share only `eap_core` and HTTP/event contracts. Never import one service from the other.
+- Configuration-plane services share `eap_metamodel` and `eap_store`; runtime-path services (resolver,
+  config MCP, SDK) never import `eap_store`. JSON Schemas in `schemas/v1` are the source of truth; after a
+  schema change run `python schemas/tools/gen_types.py` and ship a migration in `eap_metamodel/migrations.py`.
+- Registry tables are append-only: never write UPDATE/DELETE against them (status and state are events, ADR-004).
 - SQL is portable (`?` placeholders, TEXT JSON/timestamps). Dialect-only migrations use `.pg.sql` / `.sqlite.sql`.
 - Add a pattern / guardrail / tool kind by registering a `PluginSpec` in `eap_core/plugins.py` (the console
   form comes from its schema) and implementing it in the runtime.

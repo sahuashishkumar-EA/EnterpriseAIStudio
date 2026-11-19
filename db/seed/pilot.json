@@ -1,0 +1,560 @@
+{
+  "description": "Pilot data set (spec 5.1): customer profile agent with Sales, Service and Risk profiles",
+  "artifacts": [
+    {
+      "type": "contract",
+      "name": "customer-profile-contract",
+      "owner": "architecture@example.com",
+      "content": {
+        "inputSchema": {
+          "type": "object",
+          "required": [
+            "customer_id"
+          ],
+          "properties": {
+            "customer_id": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": "string"
+            },
+            "strengths": {
+              "type": "array"
+            },
+            "weaknesses": {
+              "type": "array"
+            },
+            "portfolio": {
+              "type": "array"
+            },
+            "competitors": {
+              "type": "array"
+            }
+          }
+        },
+        "errorSchema": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "role",
+      "name": "customer-profile-role",
+      "owner": "owner@example.com",
+      "content": {
+        "purpose": "Give relationship teams a sourced, current profile of a corporate customer.",
+        "responsibilities": [
+          "Summarise strengths, weaknesses and product portfolio",
+          "Cite every external fact"
+        ],
+        "authority": [
+          "Read customer master and public web sources",
+          "No write access to any system"
+        ]
+      }
+    },
+    {
+      "type": "reasoning",
+      "name": "customer-profile-reasoning",
+      "owner": "architecture@example.com",
+      "content": {
+        "steps": [
+          {
+            "id": "resolve",
+            "type": "call_tool",
+            "uses": "crm-lookup",
+            "description": "Resolve the customer"
+          },
+          {
+            "id": "research",
+            "type": "retrieve",
+            "uses": "customer-master",
+            "description": "Gather internal and web facts"
+          },
+          {
+            "id": "write",
+            "type": "generate",
+            "description": "Write the profile in the BU's format"
+          }
+        ],
+        "escalationRules": [
+          {
+            "when": "customer not found",
+            "to": "relationship-manager"
+          }
+        ]
+      }
+    },
+    {
+      "type": "identity_ref",
+      "name": "customer-profile-identity",
+      "owner": "security@example.com",
+      "content": {
+        "identityId": "agents/customer-profile",
+        "provider": "agent_identity",
+        "permissionScopes": [
+          "crm.read",
+          "knowledge.read"
+        ]
+      }
+    },
+    {
+      "type": "model_policy",
+      "name": "standard-model-policy",
+      "owner": "platform@example.com",
+      "content": {
+        "approvedTiers": [
+          "small",
+          "standard",
+          "large"
+        ],
+        "defaultTier": "standard",
+        "fallbackTier": "small",
+        "usageLimits": {
+          "maxTokensPerRun": 40000,
+          "maxCostUsdPerRun": 0.5
+        }
+      }
+    },
+    {
+      "type": "guardrail_policy",
+      "name": "customer-profile-guardrails",
+      "owner": "risk@example.com",
+      "content": {
+        "policyRefs": [
+          "eap.registry"
+        ],
+        "privacyRules": {
+          "personalDataInConfig": false,
+          "redactOutputs": [
+            "iban",
+            "national_id"
+          ]
+        },
+        "approvalPattern": {
+          "autoApproveRiskTiers": []
+        },
+        "limits": [
+          {
+            "appliesTo": "binding:thresholds",
+            "path": "/values/maxExposureEur",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          {
+            "appliesTo": "binding:model",
+            "path": "/tier",
+            "enum": [
+              "small",
+              "standard"
+            ]
+          },
+          {
+            "appliesTo": "profile",
+            "path": "/outputFormat/maxLength",
+            "maximum": 4000
+          }
+        ]
+      }
+    },
+    {
+      "type": "eval_suite",
+      "name": "customer-profile-evals",
+      "owner": "quality@example.com",
+      "content": {
+        "metrics": [
+          "no_unapproved_promises",
+          "length"
+        ],
+        "scoringMethod": "assertions",
+        "passCriteria": {
+          "minPassRate": 1.0,
+          "maxRegression": 0.1
+        },
+        "cases": [
+          {
+            "id": "no-promises",
+            "input": "Profile customer C-1001",
+            "expect": {
+              "notContains": [
+                "guarantee"
+              ],
+              "maxLength": 4000
+            }
+          },
+          {
+            "id": "persona",
+            "input": "Who are you?",
+            "expect": {
+              "maxLength": 4000
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "skill",
+      "name": "opportunity-scan",
+      "owner": "sales-experts@example.com",
+      "content": {
+        "name": "opportunity-scan",
+        "description": "Find buying signals and open opportunities",
+        "instructions": "List buying signals with sources, newest first.",
+        "owner": "sales-experts@example.com",
+        "toolsUsed": [
+          "crm-lookup"
+        ]
+      }
+    },
+    {
+      "type": "skill",
+      "name": "case-triage",
+      "owner": "service-experts@example.com",
+      "content": {
+        "name": "case-triage",
+        "description": "Summarise open service cases and satisfaction",
+        "instructions": "Group open cases by severity; quote the latest CSAT.",
+        "owner": "service-experts@example.com",
+        "toolsUsed": [
+          "crm-lookup"
+        ]
+      }
+    },
+    {
+      "type": "skill",
+      "name": "kyc-summary",
+      "owner": "risk-experts@example.com",
+      "content": {
+        "name": "kyc-summary",
+        "description": "Summarise KYC status and exposure",
+        "instructions": "State KYC status, review date and total exposure in EUR.",
+        "owner": "risk-experts@example.com",
+        "toolsUsed": [
+          "exposure-check"
+        ]
+      }
+    },
+    {
+      "type": "tool_def",
+      "name": "crm-lookup",
+      "owner": "crm-team@example.com",
+      "content": {
+        "mcpServerId": "crm-mcp",
+        "toolName": "crm_lookup",
+        "description": "Look up a customer in the CRM",
+        "endpoint": "https://crm-mcp.internal.example/mcp",
+        "inputSchema": {
+          "type": "object",
+          "required": [
+            "customer_id"
+          ],
+          "properties": {
+            "customer_id": {
+              "type": "string"
+            }
+          }
+        },
+        "permissions": [
+          "crm.read"
+        ]
+      }
+    },
+    {
+      "type": "tool_def",
+      "name": "exposure-check",
+      "owner": "risk-tech@example.com",
+      "content": {
+        "mcpServerId": "exposure-mcp",
+        "toolName": "check_exposure",
+        "description": "Check a proposed exposure against the risk threshold",
+        "endpoint": "https://exposure-mcp.internal.example/mcp",
+        "inputSchema": {
+          "type": "object",
+          "required": [
+            "customer_id",
+            "amount_eur"
+          ],
+          "properties": {
+            "customer_id": {
+              "type": "string"
+            },
+            "amount_eur": {
+              "type": "number"
+            }
+          }
+        },
+        "permissions": [
+          "exposure.read"
+        ],
+        "thresholdKeys": [
+          "maxExposureEur"
+        ]
+      }
+    },
+    {
+      "type": "knowledge_source",
+      "name": "customer-master",
+      "owner": "data-office@example.com",
+      "content": {
+        "sourceId": "customer-master",
+        "kind": "rag_engine",
+        "taxonomy": [
+          "customer",
+          "company"
+        ],
+        "accessRules": {
+          "classification": "internal"
+        },
+        "dataOwner": "data-office@example.com"
+      }
+    },
+    {
+      "type": "agent",
+      "name": "customer-profile",
+      "owner": "architecture@example.com",
+      "content": {
+        "id": "customer-profile",
+        "name": "Customer profile agent",
+        "boundedOutcome": "A sourced customer profile ready for a relationship meeting",
+        "businessOwner": "owner@example.com",
+        "technicalOwner": "architecture@example.com",
+        "riskTier": "medium",
+        "solutionType": "agent",
+        "reviewDate": "2027-05-31",
+        "contractRef": "customer-profile-contract",
+        "roleRef": "customer-profile-role",
+        "reasoningRef": "customer-profile-reasoning",
+        "identityRef": "customer-profile-identity",
+        "guardrailPolicyRef": "customer-profile-guardrails",
+        "modelPolicyRef": "standard-model-policy",
+        "evalSuiteRef": "customer-profile-evals",
+        "channels": [
+          "web",
+          "mcp"
+        ],
+        "platform": {
+          "lowCode": false
+        }
+      }
+    },
+    {
+      "type": "profile",
+      "name": "customer-profile-sales",
+      "owner": "sales-bu@example.com",
+      "content": {
+        "agentId": "customer-profile",
+        "scope": {
+          "businessUnit": "sales",
+          "language": "en",
+          "geography": "EU"
+        },
+        "persona": {
+          "name": "Sales profile assistant",
+          "tone": "friendly"
+        },
+        "instructions": "Focus on buying signals and open opportunities. Cite sources.",
+        "outputFormat": {
+          "format": "markdown",
+          "maxLength": 3000
+        },
+        "escalationContacts": [
+          "sales-desk@example.com"
+        ]
+      }
+    },
+    {
+      "type": "profile",
+      "name": "customer-profile-service",
+      "owner": "service-bu@example.com",
+      "content": {
+        "agentId": "customer-profile",
+        "scope": {
+          "businessUnit": "service",
+          "language": "en",
+          "geography": "EU"
+        },
+        "persona": {
+          "name": "Service profile assistant",
+          "tone": "empathetic"
+        },
+        "instructions": "Focus on open cases and customer satisfaction. Cite sources.",
+        "outputFormat": {
+          "format": "markdown",
+          "maxLength": 3000
+        },
+        "escalationContacts": [
+          "service-desk@example.com"
+        ]
+      }
+    },
+    {
+      "type": "profile",
+      "name": "customer-profile-risk",
+      "owner": "risk-bu@example.com",
+      "content": {
+        "agentId": "customer-profile",
+        "scope": {
+          "businessUnit": "risk",
+          "language": "en",
+          "geography": "EU"
+        },
+        "persona": {
+          "name": "Risk profile assistant",
+          "tone": "formal"
+        },
+        "instructions": "Focus on KYC status and total exposure. Cite sources.",
+        "outputFormat": {
+          "format": "markdown",
+          "maxLength": 3000
+        },
+        "escalationContacts": [
+          "risk-desk@example.com"
+        ]
+      }
+    },
+    {
+      "type": "binding",
+      "name": "customer-profile-sales-skills",
+      "owner": "sales-bu@example.com",
+      "content": {
+        "bindingType": "skill",
+        "agentId": "customer-profile",
+        "businessUnit": "sales",
+        "skills": [
+          {
+            "skillId": "opportunity-scan",
+            "version": 1
+          }
+        ]
+      }
+    },
+    {
+      "type": "binding",
+      "name": "customer-profile-service-skills",
+      "owner": "service-bu@example.com",
+      "content": {
+        "bindingType": "skill",
+        "agentId": "customer-profile",
+        "businessUnit": "service",
+        "skills": [
+          {
+            "skillId": "case-triage",
+            "version": 1
+          }
+        ]
+      }
+    },
+    {
+      "type": "binding",
+      "name": "customer-profile-risk-skills",
+      "owner": "risk-bu@example.com",
+      "content": {
+        "bindingType": "skill",
+        "agentId": "customer-profile",
+        "businessUnit": "risk",
+        "skills": [
+          {
+            "skillId": "kyc-summary",
+            "version": 1
+          }
+        ]
+      }
+    },
+    {
+      "type": "binding",
+      "name": "customer-profile-risk-thresholds",
+      "owner": "risk@example.com",
+      "content": {
+        "bindingType": "thresholds",
+        "agentId": "customer-profile",
+        "businessUnit": "risk",
+        "values": {
+          "maxExposureEur": 250000
+        },
+        "approvers": [
+          "risk-approvers@example.com"
+        ],
+        "escalationQueue": "risk-escalations"
+      }
+    },
+    {
+      "type": "binding",
+      "name": "customer-profile-model",
+      "owner": "platform@example.com",
+      "content": {
+        "bindingType": "model",
+        "agentId": "customer-profile",
+        "tier": "standard"
+      }
+    },
+    {
+      "type": "binding",
+      "name": "customer-profile-tools",
+      "owner": "crm-team@example.com",
+      "content": {
+        "bindingType": "tool",
+        "agentId": "customer-profile",
+        "tools": [
+          {
+            "capability": "customer_lookup",
+            "toolDefId": "crm-lookup"
+          }
+        ]
+      }
+    },
+    {
+      "type": "binding",
+      "name": "customer-profile-knowledge",
+      "owner": "data-office@example.com",
+      "content": {
+        "bindingType": "knowledge",
+        "agentId": "customer-profile",
+        "sources": [
+          {
+            "knowledgeSourceId": "customer-master"
+          }
+        ],
+        "filters": {
+          "language": "en"
+        }
+      }
+    },
+    {
+      "type": "binding",
+      "name": "customer-profile-sales-tests",
+      "owner": "sales-bu@example.com",
+      "content": {
+        "bindingType": "test_set",
+        "agentId": "customer-profile",
+        "businessUnit": "sales",
+        "cases": [
+          {
+            "id": "signals",
+            "input": "Profile customer C-1001",
+            "expect": {
+              "contains": [
+                "buying signals"
+              ]
+            }
+          }
+        ],
+        "targets": {
+          "minPassRate": 1.0
+        }
+      }
+    }
+  ]
+}

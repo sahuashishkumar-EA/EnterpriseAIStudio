@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/guardrail_policy.schema.json",
+  "title": "Guardrail policy",
+  "type": "object",
+  "x-artifact-type": "guardrail_policy",
+  "x-schema-version": "1.0.0",
+  "x-lane": "hot",
+  "x-editors": [
+    "risk",
+    "security"
+  ],
+  "x-approvers": [
+    "risk"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "policyRefs": {
+      "type": "array",
+      "x-lane": "cold",
+      "x-editors": [
+        "security"
+      ],
+      "x-approvers": [
+        "security"
+      ],
+      "description": "Rego packages evaluated by the policy step",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_.]*$"
+      }
+    },
+    "privacyRules": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-editors": [
+        "risk"
+      ],
+      "properties": {
+        "personalDataInConfig": {
+          "type": "boolean",
+          "const": false
+        },
+        "redactOutputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "approvalPattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "x-editors": [
+        "risk"
+      ],
+      "properties": {
+        "autoApproveRiskTiers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "array",
+      "description": "Limits that profiles and bindings may not exceed (C01-F4)",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "appliesTo",
+          "path"
+        ],
+        "properties": {
+          "appliesTo": {
+            "type": "string",
+            "description": "artifact type, or binding:<bindingType>",
+            "pattern": "^(profile|binding:(skill|tool|knowledge|model|thresholds|test_set))$"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "minimum": {
+            "type": "number"
+          },
+          "maximum": {
+            "type": "number"
+          },
+          "enum": {
+            "type": "array"
+          },
+          "maxLength": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "policyRefs",
+    "limits"
+  ]
+}

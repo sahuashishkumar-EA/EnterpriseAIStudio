@@ -18,7 +18,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-import httpx
 import jwt
 
 IAP_JWKS = "https://www.gstatic.com/iap/verify/public_key-jwk"
@@ -96,6 +95,8 @@ class _JWKSCache:
         hit = self._cache.get(url)
         if hit and time.time() - hit[0] < self._ttl:
             return hit[1]
+        import httpx  # lazy: keeps eap_core importable where only dev auth is used
+
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.get(url)
             r.raise_for_status()

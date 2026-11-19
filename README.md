@@ -17,6 +17,18 @@ Two separately deployed services:
  callers / MCP clients ─────────────────────────────────────────────▶ Runtime /v1/agents/{name}@{alias}/invoke, /mcp
 ```
 
+## Configuration-first platform (spec v1.0)
+
+The platform is being re-engineered so every agent is versioned configuration in a registry that
+any agent platform (primarily Gemini Enterprise Agent Platform) reads at runtime: metamodel (C01),
+append-only registry (C03/C04), promotion workflow (C05), evaluations (C06), resolver (C07), SDKs (C09),
+adapters and provisioning (C10/C11) and a domain MCP server kit (C12). See
+[`docs/config-platform.md`](docs/config-platform.md) and [`docs/adr/`](docs/adr/).
+
+```bash
+python -m pytest -q tests/e2e tests/test_config_platform.py templates/mcp-server/tests
+```
+
 ## Agent Studio (two personas, many contexts)
 
 Technical and functional experts work on the same agent on separate screens. The technical

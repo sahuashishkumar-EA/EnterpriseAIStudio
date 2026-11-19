@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/knowledge_source.schema.json",
+  "title": "Knowledge source",
+  "type": "object",
+  "x-artifact-type": "knowledge_source",
+  "x-schema-version": "1.0.0",
+  "x-lane": "cold",
+  "x-editors": [
+    "domain_expert"
+  ],
+  "x-approvers": [
+    "domain_expert"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "sourceId": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "rag_engine",
+        "vertex_search",
+        "pgvector",
+        "web",
+        "bigquery"
+      ]
+    },
+    "taxonomy": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "accessRules": {
+      "type": "object"
+    },
+    "dataOwner": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "sourceId",
+    "kind",
+    "dataOwner"
+  ]
+}

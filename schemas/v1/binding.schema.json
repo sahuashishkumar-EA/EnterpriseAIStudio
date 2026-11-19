@@ -1,0 +1,347 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/binding.schema.json",
+  "title": "Binding (skill, tool, knowledge, model, thresholds, test set)",
+  "type": "object",
+  "x-artifact-type": "binding",
+  "x-schema-version": "1.0.0",
+  "x-lane": "hot",
+  "x-editors": [
+    "business_unit"
+  ],
+  "x-approvers": [
+    "bu_owner"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "bindingType": {
+      "type": "string",
+      "enum": [
+        "skill",
+        "tool",
+        "knowledge",
+        "model",
+        "thresholds",
+        "test_set"
+      ],
+      "x-lane": "cold"
+    },
+    "agentId": {
+      "type": "string",
+      "x-ref": "agent",
+      "x-lane": "cold",
+      "x-editors": [
+        "architect"
+      ],
+      "pattern": "^[a-z][a-z0-9-]{1,62}$"
+    },
+    "businessUnit": {
+      "type": "string",
+      "x-lane": "cold",
+      "description": "Omit for an agent-wide binding"
+    },
+    "skills": {
+      "type": "array",
+      "x-lane": "hot",
+      "x-editors": [
+        "business_unit"
+      ],
+      "x-approvers": [
+        "bu_owner"
+      ],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "skillId"
+        ],
+        "properties": {
+          "skillId": {
+            "type": "string",
+            "x-ref": "skill"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "x-lane": "cold",
+      "x-editors": [
+        "domain_expert"
+      ],
+      "x-approvers": [
+        "security"
+      ],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capability",
+          "toolDefId"
+        ],
+        "properties": {
+          "capability": {
+            "type": "string"
+          },
+          "toolDefId": {
+            "type": "string",
+            "x-ref": "tool_def"
+          }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "x-lane": "cold",
+      "x-editors": [
+        "domain_expert"
+      ],
+      "x-approvers": [
+        "domain_expert"
+      ],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "knowledgeSourceId"
+        ],
+        "properties": {
+          "knowledgeSourceId": {
+            "type": "string",
+            "x-ref": "knowledge_source"
+          }
+        }
+      }
+    },
+    "filters": {
+      "type": "object",
+      "x-lane": "hot",
+      "x-editors": [
+        "domain_expert"
+      ],
+      "properties": {
+        "taxonomy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "language": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "small",
+        "standard",
+        "large"
+      ],
+      "x-lane": "hot",
+      "x-editors": [
+        "business_unit"
+      ],
+      "x-approvers": [
+        "bu_owner"
+      ]
+    },
+    "values": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      },
+      "x-lane": "hot",
+      "x-editors": [
+        "risk",
+        "business_unit"
+      ],
+      "x-approvers": [
+        "risk"
+      ]
+    },
+    "approvers": {
+      "type": "array",
+      "x-lane": "hot",
+      "x-editors": [
+        "risk"
+      ],
+      "x-approvers": [
+        "risk"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "escalationQueue": {
+      "type": "string",
+      "x-lane": "hot",
+      "x-editors": [
+        "risk"
+      ],
+      "x-approvers": [
+        "risk"
+      ]
+    },
+    "cases": {
+      "type": "array",
+      "x-lane": "hot",
+      "x-editors": [
+        "business_unit",
+        "qa"
+      ],
+      "x-approvers": [
+        "bu_owner"
+      ],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "input"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "input": {
+            "type": "string"
+          },
+          "expect": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "contains": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "notContains": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "maxLength": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "targets": {
+      "type": "object",
+      "x-editors": [
+        "business_unit",
+        "qa"
+      ],
+      "properties": {
+        "minPassRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "bindingType",
+    "agentId"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "bindingType": {
+            "const": "skill"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "skills"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "bindingType": {
+            "const": "tool"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "tools"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "bindingType": {
+            "const": "knowledge"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sources"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "bindingType": {
+            "const": "model"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "tier"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "bindingType": {
+            "const": "thresholds"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "values"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "bindingType": {
+            "const": "test_set"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "cases",
+          "targets"
+        ]
+      }
+    }
+  ]
+}

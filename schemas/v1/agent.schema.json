@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/agent.schema.json",
+  "title": "Agent",
+  "type": "object",
+  "x-artifact-type": "agent",
+  "x-schema-version": "1.0.0",
+  "x-lane": "cold",
+  "x-editors": [
+    "architect",
+    "business_owner"
+  ],
+  "x-approvers": [
+    "architect"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,62}$",
+      "x-lane": "cold"
+    },
+    "name": {
+      "type": "string",
+      "x-lane": "hot",
+      "x-editors": [
+        "business_owner"
+      ],
+      "x-approvers": [
+        "business_owner"
+      ],
+      "maxLength": 120
+    },
+    "boundedOutcome": {
+      "type": "string",
+      "x-lane": "hot",
+      "x-editors": [
+        "business_owner"
+      ],
+      "x-approvers": [
+        "business_owner"
+      ],
+      "maxLength": 2000,
+      "description": "The one business outcome this agent is accountable for"
+    },
+    "businessOwner": {
+      "type": "string",
+      "x-lane": "hot",
+      "x-editors": [
+        "architect"
+      ]
+    },
+    "technicalOwner": {
+      "type": "string",
+      "x-lane": "hot",
+      "x-editors": [
+        "architect"
+      ]
+    },
+    "riskTier": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "x-lane": "cold",
+      "x-editors": [
+        "risk"
+      ],
+      "x-approvers": [
+        "risk"
+      ]
+    },
+    "solutionType": {
+      "type": "string",
+      "enum": [
+        "assistant",
+        "agent"
+      ],
+      "x-lane": "cold"
+    },
+    "reviewDate": {
+      "type": "string",
+      "format": "date",
+      "x-lane": "hot",
+      "x-editors": [
+        "business_owner",
+        "risk"
+      ]
+    },
+    "contractRef": {
+      "type": "string",
+      "x-ref": "contract"
+    },
+    "roleRef": {
+      "type": "string",
+      "x-ref": "role",
+      "x-lane": "hot"
+    },
+    "reasoningRef": {
+      "type": "string",
+      "x-ref": "reasoning",
+      "x-lane": "hot"
+    },
+    "identityRef": {
+      "type": "string",
+      "x-ref": "identity_ref",
+      "x-editors": [
+        "security"
+      ],
+      "x-approvers": [
+        "security"
+      ]
+    },
+    "guardrailPolicyRef": {
+      "type": "string",
+      "x-ref": "guardrail_policy",
+      "x-editors": [
+        "risk"
+      ],
+      "x-approvers": [
+        "risk"
+      ]
+    },
+    "modelPolicyRef": {
+      "type": "string",
+      "x-ref": "model_policy",
+      "x-lane": "hot",
+      "x-editors": [
+        "platform"
+      ],
+      "x-approvers": [
+        "platform"
+      ]
+    },
+    "evalSuiteRef": {
+      "type": "string",
+      "x-ref": "eval_suite",
+      "x-lane": "hot",
+      "x-editors": [
+        "domain_expert",
+        "qa"
+      ],
+      "x-approvers": [
+        "domain_expert"
+      ]
+    },
+    "channels": {
+      "type": "array",
+      "x-lane": "cold",
+      "description": "Where the agent is published",
+      "items": {
+        "type": "string",
+        "enum": [
+          "web",
+          "teams",
+          "api",
+          "mcp",
+          "a2a"
+        ]
+      }
+    },
+    "platform": {
+      "type": "object",
+      "x-lane": "cold",
+      "description": "Target platform hints; vendor specifics live in adapters only",
+      "properties": {
+        "lowCode": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "boundedOutcome",
+    "businessOwner",
+    "technicalOwner",
+    "riskTier",
+    "solutionType",
+    "contractRef",
+    "guardrailPolicyRef",
+    "modelPolicyRef",
+    "evalSuiteRef"
+  ]
+}

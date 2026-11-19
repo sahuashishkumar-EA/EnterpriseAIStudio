@@ -1,0 +1,13 @@
+{
+  "name": "@eap/agent-config",
+  "version": "1.0.0",
+  "description": "C09 Agent config SDK: fetch, pin and log configuration versions",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "tsc -p . && node --test dist/test/*.test.js"
+  },
+  "license": "UNLICENSED"
+}

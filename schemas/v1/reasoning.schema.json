@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/reasoning.schema.json",
+  "title": "Reasoning pattern",
+  "type": "object",
+  "x-artifact-type": "reasoning",
+  "x-schema-version": "1.0.0",
+  "x-lane": "hot",
+  "x-editors": [
+    "architect"
+  ],
+  "x-approvers": [
+    "architect"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "type"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "retrieve",
+              "call_tool",
+              "call_agent",
+              "generate",
+              "escalate",
+              "ask_user"
+            ],
+            "description": "New step types need a schema change (cold)"
+          },
+          "description": {
+            "type": "string"
+          },
+          "uses": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "escalationRules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "when",
+          "to"
+        ],
+        "properties": {
+          "when": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "steps"
+  ]
+}

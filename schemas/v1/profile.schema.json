@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.eap.example/v1/profile.schema.json",
+  "title": "Behavior profile",
+  "type": "object",
+  "x-artifact-type": "profile",
+  "x-schema-version": "1.1.0",
+  "x-lane": "hot",
+  "x-editors": [
+    "business_unit"
+  ],
+  "x-approvers": [
+    "bu_owner"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "agentId": {
+      "type": "string",
+      "x-ref": "agent",
+      "x-lane": "cold",
+      "x-editors": [
+        "architect"
+      ],
+      "pattern": "^[a-z][a-z0-9-]{1,62}$"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "businessUnit"
+      ],
+      "x-lane": "cold",
+      "x-editors": [
+        "architect",
+        "business_unit"
+      ],
+      "properties": {
+        "businessUnit": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{1,40}$"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "geography": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "userGroups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dataScope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "x-approvers": [
+            "risk"
+          ]
+        }
+      }
+    },
+    "persona": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "tone"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "tone": {
+          "type": "string",
+          "enum": [
+            "professional",
+            "friendly",
+            "formal",
+            "empathetic",
+            "concise"
+          ]
+        }
+      }
+    },
+    "instructions": {
+      "type": "string",
+      "maxLength": 20000
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "input",
+          "output"
+        ],
+        "properties": {
+          "input": {
+            "type": "string"
+          },
+          "output": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "outputFormat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format"
+      ],
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "text",
+            "markdown",
+            "json"
+          ]
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "schema": {
+          "type": "object"
+        }
+      }
+    },
+    "escalationContacts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "agentId",
+    "scope",
+    "persona",
+    "instructions",
+    "outputFormat"
+  ]
+}

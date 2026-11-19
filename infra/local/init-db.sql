@@ -5,3 +5,8 @@ CREATE DATABASE governor OWNER governor;
 CREATE DATABASE runtime OWNER runtime;
 \c runtime
 CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Configuration registry (C04). The DDL in db/migrations creates schema `registry` and role
+-- `registry_app` (SELECT/INSERT only); the service login is granted that role.
+CREATE USER registry_owner WITH PASSWORD 'registry';
+CREATE DATABASE registry OWNER registry_owner;
