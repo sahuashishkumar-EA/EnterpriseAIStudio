@@ -2,7 +2,8 @@
 # demo chat app (:8082).
 # Dev auth (X-Dev-* headers), mock models, events pushed directly from governor to runtime.
 #   docker compose up --build
-#   python examples/seed.py --governor http://localhost:8080 --runtime http://localhost:8081
+#   python examples/seed.py --governor http://localhost:8080 --runtime http://localhost:8081 --studio
+# Real answers: GOOGLE_AI_API_KEY=... EAP_WEB_EMBEDDING_MODEL=google_ai:gemini-embedding-001 docker compose up
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -32,6 +33,7 @@ services:
       EAP_EVENTS_PUSH_DEV_USER: governor
       EAP_BOOTSTRAP_ADMINS: admin@example.com
       EAP_RELAXED_RELEASE: "true"
+      EAP_WEB_EMBEDDING_MODEL: ${EAP_WEB_EMBEDDING_MODEL:-mock-embedding}
       EAP_CHAT_URL: http://localhost:8082/
 
   runtime:
@@ -45,6 +47,8 @@ services:
       EAP_GOVERNOR_AUTH: dev
       EAP_CALL_CONTEXT_KEY: local-dev-call-context-key-0123456789abcdef
       EAP_RESOLVER_TTL_S: "30"
+      # optional: Gemini API key from Google AI Studio for real answers
+      GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY:-}
 
   chat:
     build: {context: ., dockerfile: services/chat/Dockerfile}

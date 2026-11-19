@@ -39,6 +39,40 @@ conversation picks a context. The studio has a live preview against the draft, a
 - **Budgets:** per-run caps, plus BU daily budgets held as atomic Postgres counters (reserve before each model call, settle after).
 - **Invoke modes:** sync, async (Cloud Tasks) and SSE stream. A minimal **MCP server** at `/mcp` exposes agents marked `exposure.mcp`.
 
+## Run it on your own computer
+
+**Option A: no Docker** (Python 3.11+, macOS / Linux / WSL)
+
+```bash
+git clone https://github.com/sahuashishkumar-EA/EnterpriseAIStudio.git && cd EnterpriseAIStudio
+```
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+```
+
+```bash
+pip install -e packages/eap_core -e services/governor -e services/runtime -e services/chat
+```
+
+```bash
+./scripts/run-local.sh
+```
+
+This starts the console on http://localhost:8080, the runtime on :8081 and the chat app on
+http://localhost:8082, and seeds the example agents on the first start (SQLite in `./.local`).
+In the console top bar enter `admin@example.com` / `*:platform_admin` and click **Use**.
+
+For real answers, start it with a Gemini API key from Google AI Studio, then open
+Catalog → `google-ai-flash` → **Test** → set it active:
+
+```bash
+GOOGLE_AI_API_KEY=your-key ./scripts/run-local.sh
+```
+
+**Option B: Docker** (adds Postgres + pgvector, like GCP): see *Quick start* below. Seed with
+`python examples/seed.py --governor http://localhost:8080 --runtime http://localhost:8081 --studio`.
+
 ## Quick start (local)
 
 ```bash
