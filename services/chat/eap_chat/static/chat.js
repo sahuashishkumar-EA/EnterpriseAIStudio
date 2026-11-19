@@ -121,7 +121,7 @@ $("menu").addEventListener("click", () => $("side").classList.toggle("open"));
   try {
     const me = await api("GET", "/api/me");
     $("who").textContent = "Signed in as " + me.user; $("title").textContent = me.title; document.title = me.title;
-    state.agents = (await api("GET", "/api/agents")).agents;
+    state.agents = (await api("GET", "/api/agents?refresh=1")).agents;
     renderAgents();
     if (state.agents.length === 1) select(state.agents[0], state.agents[0].default_context);
   } catch (e) { $("agents").replaceChildren(el("p", { class: "muted" }, "⚠ " + e.message)); }

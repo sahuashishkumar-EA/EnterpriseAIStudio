@@ -352,6 +352,29 @@ async function tabStudio(agent) {
 
 // ------------------------------------------------------------------ overview
 
+// Why is (or isn't) this agent in the chat app? Checks the PUBLISHED prod version, not the draft.
+function chatVisibility(agent) {
+  const box = h("div", { class: "chat-vis" }, h("span", { class: "muted small" }, "Checking chat app visibility…"));
+  const prod = agent.aliases.find((a) => a.alias === "prod");
+  const draftChat = !!(agent.draft.definition.exposure || {}).chat;
+  const show = (ok, lines) => box.replaceChildren(
+    h("div", { class: ok ? "pass" : "warn-text" }, ok ? "✓ Visible in the chat app" : "✗ Not visible in the chat app"),
+    lines.length ? h("ul", { class: "small" }, lines.map((l) => h("li", {}, l))) : "");
+  if (!prod) {
+    show(false, ["No version is live: nothing is pointed at the “prod” alias yet. Use ⚡ Quick publish, or Publish with alias “prod”."]);
+    return box;
+  }
+  api("GET", `/agents/${agent.name}/versions/${prod.version}`).then((v) => {
+    const live = !!((v.definition.exposure || {}).chat);
+    const lines = [];
+    if (!live) lines.push(`The live version ${prod.version} has “Offer in chat app” switched off.` +
+      (draftChat ? " The draft has it on — publish again to make it live." : " Turn it on in Technical setup → Basics, save, then publish."));
+    else lines.push(`prod → ${prod.version}. Reload the chat app (it refreshes its agent list on load).`);
+    show(live, lines);
+  }).catch((e) => show(false, [e.message]));
+  return box;
+}
+
 async function tabOverview(agent) {
   const d = agent.draft.definition;
   const model = state.catalog.models.find((m) => m.id === d.model.catalog_id);
@@ -371,7 +394,8 @@ async function tabOverview(agent) {
           h("tr", {}, h("td", {}, "Model"), h("td", {}, d.model.catalog_id, " ", model ? statusBadge(model.status) : badge("missing", "bad"))),
           h("tr", {}, h("td", {}, "Pattern"), h("td", {}, d.pattern.type)),
           h("tr", {}, h("td", {}, "Tools / agents"), h("td", {}, `${d.bindings.tools.length} / ${d.bindings.agents.length}`)),
-          h("tr", {}, h("td", {}, "Channels"), h("td", {}, [d.exposure.chat ? "chat app" : "", d.exposure.mcp ? "MCP" : "", "API"].filter(Boolean).join(", ")))),
+          h("tr", {}, h("td", {}, "Channels (draft)"), h("td", {}, [d.exposure.chat ? "chat app" : "", d.exposure.mcp ? "MCP" : "", "API"].filter(Boolean).join(", ")))),
+        chatVisibility(agent),
         h("a", { class: "btn-link", href: `#/agents/${agent.name}/technical` }, "Open technical setup →")),
       h("div", { class: "panel" }, h("h3", {}, "🚀 Release"),
         h("table", {},

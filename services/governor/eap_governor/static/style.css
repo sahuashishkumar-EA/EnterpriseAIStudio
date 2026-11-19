@@ -53,6 +53,8 @@ ul.blockers { margin: 6px 0; padding-left: 18px; } ul.blockers li { color: var(-
 td select { min-width: 110px; }
 
 /* ------------------------------------------------------------------ studio */
+.chat-vis { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.chat-vis ul { margin: 4px 0 0; padding-left: 18px; }
 .small { font-size: 12px; } .warn-text { color: var(--warn); } .plain { list-style: none; padding: 0; margin: 0; } .plain li { margin: 6px 0; }
 .persona { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-right: 6px; }
 .persona .seg-opt { border: 0; border-radius: 0; }
