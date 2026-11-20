@@ -32,6 +32,7 @@ class Settings:
     embedding_location: str = "europe-west4"
     # Edge mode: the public deployment for external agents only serves /gov/v1, /mcp and /healthz.
     edge: bool = False
+    web_search_location: str = "global"  # Vertex location for Google Search grounding
 
     @staticmethod
     def from_env() -> "Settings":
@@ -58,5 +59,6 @@ class Settings:
             trusted_services=lst("EAP_TRUSTED_SERVICES", "governor,runtime"),
             delegating_services=lst("EAP_DELEGATING_SERVICES", "chat"),
             edge=e.get("EAP_EDGE", "false").lower() == "true",
+            web_search_location=e.get("EAP_WEB_SEARCH_LOCATION", "global"),
             embedding_location=e.get("EAP_EMBEDDING_LOCATION", "europe-west4"),
         )

@@ -190,3 +190,10 @@ def completeness(ctx: FunctionalContext) -> dict[str, Any]:
     if g.personal_data == "allow" and ctx.audience and "customer" in ctx.audience.lower():
         hints.append("Personal data is allowed for a customer-facing audience — consider 'Redact it'.")
     return {"score": round(100 * sum(checks.values()) / len(checks)), "checks": checks, "hints": hints}
+
+
+def scan_hints(ctx: FunctionalContext) -> list[str]:
+    """What the context is about - steers the smart site crawl towards relevant pages."""
+    g = ctx.guardrails
+    return [x for x in [ctx.name, ctx.description, ctx.audience, ctx.role, ctx.goal, *g.allowed_topics,
+                        *ctx.starters, *(n.title for n in ctx.notes)] if x]

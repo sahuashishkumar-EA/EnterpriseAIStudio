@@ -49,7 +49,7 @@ DATABASE_URL="sqlite:///$DATA/governor.db" PORT=8080 EAP_RUNTIME_URL=http://127.
   "$PY" -c "from eap_governor.app import main; main()" > "$DATA/governor.log" 2>&1 &
 pids+=($!)
 PORT=8082 EAP_GOVERNOR_URL=http://127.0.0.1:8080 EAP_RUNTIME_URL=http://127.0.0.1:8081 \
-  EAP_CHAT_DEV_USER=admin@example.com EAP_CHAT_TITLE="Agent Chat (local)" \
+  EAP_CHAT_TITLE="Agent Chat (local)" \
   "$PY" -c "from eap_chat.app import main; main()" > "$DATA/chat.log" 2>&1 &
 pids+=($!)
 
@@ -72,7 +72,9 @@ fi
 cat <<EOF
 
   Console : http://localhost:8080   (top bar: dev user admin@example.com, roles *:platform_admin, click Use)
-  Chat app: http://localhost:8082
+  Chat app: http://localhost:8082   (sign in as ann@example.com: Retail + Wealth member;
+            Wealth gets its own edition of bank-assistant)
+  People  : admin@example.com (platform admin), tom@example.com (Retail technical), fred@example.com (Wealth functional)
   Logs    : $DATA/governor.log, runtime.log, chat.log
   Models  : $([ -n "${GOOGLE_AI_API_KEY:-}" ] && echo "Gemini API key set - Catalog > google-ai-flash > Test, then set active" || echo "mock (set GOOGLE_AI_API_KEY for real answers)")
 

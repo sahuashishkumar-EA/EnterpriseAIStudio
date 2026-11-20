@@ -28,6 +28,7 @@ resource "google_project_service" "apis" {
     "bigquery.googleapis.com",
     "cloudbuild.googleapis.com",
     "cloudkms.googleapis.com",
+    "cloudscheduler.googleapis.com",
     "cloudtasks.googleapis.com",
     "compute.googleapis.com",
     "iap.googleapis.com",

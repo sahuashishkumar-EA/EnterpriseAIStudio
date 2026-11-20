@@ -228,3 +228,8 @@ table.people { width: 100%; margin-top: 10px; } table.people td { vertical-align
 .variant-banner { background: var(--code); border-radius: var(--radius); padding: 8px 12px; margin: -4px 0 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .variant-banner.warn { border-left: 3px solid var(--warn); }
 .model-picks { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+
+/* web knowledge */
+.web-src { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
+.web-src .web-row { margin: 0; }
+.web-search { border-top: 1px dashed var(--line); margin-top: 12px; padding-top: 4px; }

@@ -47,6 +47,7 @@ from .models import ModelRegistry
 from .resolver import ResolveError, Resolver, pick_release
 from .runs import RunStore
 from .tools import ToolRunner
+from .websearch import WebSearcher
 from .webscan import WebScanner
 
 log = logging.getLogger("eap.runtime")
@@ -85,6 +86,7 @@ def create_app(
         knowledge=KnowledgeStore(db, Embedder(settings.gcp_project, settings.embedding_location, transport=vertex_transport)),
         budgets=Budgets(db),
         runs=RunStore(db),
+        web=WebSearcher(project=settings.gcp_project, location=settings.web_search_location, transport=web_transport),
     )
     queue = tasks or queue_from_env()
     scanner = WebScanner(transport=web_transport, ssrf_protection=settings.web_ssrf_protection)
@@ -504,7 +506,7 @@ def create_app(
         require_service(p, settings.execute_callers)
         b = await request.json()
         source_id, sources = b["source_id"], b.get("sources") or []
-        docs, report = await scanner.scan(sources)
+        docs, report = await scanner.scan(sources, b.get("hints") or [])
         model = b.get("embedding_model") or "mock-embedding"
         warnings: list[str] = []
         await svc.knowledge.delete_source(source_id)

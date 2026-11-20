@@ -103,6 +103,60 @@ async def seed_studio_example(gov: httpx.AsyncClient, headers: dict[str, str] | 
     return _check(await gov.post("/api/v1/agents/bank-assistant/quick-publish", json={}, headers=headers), "quick publish")
 
 
+WEALTH_CONTEXT = {
+    "name": "Wealth clients",
+    "description": "Private banking clients with an investment portfolio",
+    "audience": "Wealth Management clients",
+    "role": "the digital assistant of our Wealth Management team",
+    "goal": "Answer questions about savings, mortgages and how to reach the client's private banker",
+    "behavior": {"tone": "formal", "verbosity": "balanced", "format": "auto", "language": "match the user"},
+    "always": ["Offer to arrange a call with the client's private banker for anything personal"],
+    "never": ["Recommend specific investments"],
+    "starters": ["How do I reach my private banker?", "What is the savings rate for large deposits?"],
+    "guardrails": {"blocked_topics": ["crypto trading"], "refusal_message": "I can't help with that here; your private banker can.",
+                   "escalation": {"triggers": ["complaint", "urgent"], "message": "I'll ask your private banker to call you today."}},
+}
+
+
+async def seed_bu_demo(gov: httpx.AsyncClient, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    """Business units, people and a Wealth variant of bank-assistant (after seed_studio_example)."""
+    headers = headers or ADMIN
+    for bu, name, welcome in (("retail", "Retail Banking", "Welcome to Retail Banking. How can we help today?"),
+                              ("wealth", "Wealth Management", "Welcome to Wealth Management.")):
+        r = await gov.post("/api/v1/business-units", json={"id": bu, "name": name}, headers=headers)
+        if r.status_code not in (201, 409):
+            _check(r, f"create BU {bu}")
+        _check(await gov.put(f"/api/v1/business-units/{bu}", json={"name": name, "settings": {"chat_welcome": welcome}},
+                             headers=headers), f"update BU {bu}")
+    people = [("ann@example.com", "Ann de Vries", "retail", {"retail": ["member"], "wealth": ["member"]}, "en"),
+              ("fred@example.com", "Fred Jansen", "wealth", {"wealth": ["functional_author", "approver", "publisher"]}, "nl"),
+              ("tom@example.com", "Tom Bakker", "retail", {"retail": ["author", "functional_author", "approver", "publisher"]}, "en")]
+    for email, display, default_bu, memberships, lang in people:
+        _check(await gov.put(f"/api/v1/users/{email}", json={"display_name": display, "default_bu": default_bu,
+                                                             "attributes": {"language": lang}}, headers=headers), f"user {email}")
+        for bu, roles in memberships.items():
+            _check(await gov.put(f"/api/v1/users/{email}/memberships/{bu}", json={"roles": roles}, headers=headers),
+                   f"membership {email}/{bu}")
+    r = await gov.get("/api/v1/agents/bank-assistant-wealth", headers=headers)
+    if r.status_code == 404:
+        _check(await gov.post("/api/v1/agents/bank-assistant/variants", json={"bu": "wealth"}, headers=headers), "wealth variant")
+    v = _check(await gov.get("/api/v1/agents/bank-assistant-wealth", headers=headers), "variant")
+    _check(await gov.put("/api/v1/agents/bank-assistant-wealth/draft/contexts/clients", json={"context": WEALTH_CONTEXT},
+                         headers=headers), "wealth context")
+    _check(await gov.put("/api/v1/agents/bank-assistant-wealth/draft/default-context", json={"context": "clients"},
+                         headers=headers), "default context")
+    for c in v["draft"]["definition"]["contexts"]:
+        if c["id"] != "clients":
+            await gov.delete(f"/api/v1/agents/bank-assistant-wealth/draft/contexts/{c['id']}", headers=headers)
+    base = _check(await gov.get("/api/v1/agents/bank-assistant-wealth", headers=headers), "variant")["draft"]["sections"]["bu"]
+    _check(await gov.put("/api/v1/agents/bank-assistant-wealth/draft/bu", json={
+        "base": base, "exposure": {"chat": True, "mcp": False, "callable_by_agents": True},
+        "overlay": {"instructions": "Address clients formally. Mention that their private banker is available on weekdays "
+                                    "from 8:00 to 20:00.", "model": {"catalog_id": "mock-large"}}}, headers=headers), "BU settings")
+    return _check(await gov.post("/api/v1/agents/bank-assistant-wealth/quick-publish", json={}, headers=headers),
+                  "quick publish variant")
+
+
 async def _main() -> None:  # pragma: no cover
     ap = argparse.ArgumentParser()
     ap.add_argument("--governor", default="http://localhost:8080")
@@ -114,6 +168,7 @@ async def _main() -> None:  # pragma: no cover
         out = await seed(gov, rt)
         if a.studio:
             out["bank-assistant"] = await seed_studio_example(gov)
+            out["bank-assistant-wealth"] = await seed_bu_demo(gov)
     print(json.dumps({k: v["version"] for k, v in out.items()}, indent=2))
 
 

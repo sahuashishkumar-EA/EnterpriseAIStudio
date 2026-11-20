@@ -190,5 +190,19 @@
     ],
     "knowledge": [],
     "agents": []
+  },
+  "customization": {
+    "enabled": true,
+    "allowed_bus": [
+      "*"
+    ],
+    "models": [
+      "mock-large"
+    ],
+    "instructions": true,
+    "contract": false,
+    "output": true,
+    "knowledge": true,
+    "web_search": true
   }
 }

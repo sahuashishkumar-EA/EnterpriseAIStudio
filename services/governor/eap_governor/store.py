@@ -912,3 +912,31 @@ def chat_catalog(tx: Tx, alias: str, bu: str) -> list[dict[str, Any]]:
         })
     replaced = {r["variant_of"] for r in rows if r["variant_of"] and r["owner_bu"] == bu}
     return sorted([r for r in rows if r["name"] not in replaced], key=lambda r: r["display_name"])
+
+
+def refresh_plan(tx: Tx, now: str | None = None) -> list[dict[str, Any]]:
+    """Live (prod) contexts with web_refresh_days whose web knowledge is older than that."""
+    from datetime import datetime, timedelta, timezone
+
+    from eap_core.compose import versioned_source_id
+
+    now_dt = datetime.fromisoformat(now) if now else datetime.now(timezone.utc)
+    out = []
+    for a in tx.fetchall("SELECT agent_name, version FROM aliases WHERE alias = 'prod'"):
+        defn = schema.parse_definition(get_version(tx, a["agent_name"], a["version"])["definition"])
+        for c in defn.contexts:
+            if not c.web_sources or c.web_refresh_days <= 0:
+                continue
+            sid = versioned_source_id(defn.name, c.id, a["version"])
+            last = tx.fetchone("SELECT MAX(started_at) AS t FROM web_scans WHERE source_id = ? AND status = 'completed'", (sid,))
+            snap = tx.fetchone("SELECT updated_at FROM catalog_knowledge WHERE id = ?", (sid,))
+            when = (last and last["t"]) or (snap and snap["updated_at"])
+            due = True
+            if when:
+                t = datetime.fromisoformat(when)
+                t = t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+                due = now_dt - t >= timedelta(days=c.web_refresh_days)
+            if due:
+                out.append({"agent": defn.name, "version": a["version"], "context": c.id, "source_id": sid,
+                            "every_days": c.web_refresh_days})
+    return out

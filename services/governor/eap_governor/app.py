@@ -958,13 +958,18 @@ def create_app(
 
         name, ctx_id, actor, scan_id = job["agent"], job["context"], job["actor"], job["scan_id"]
         bu = await agent_bu(name)
-        defn = schema.parse_definition((await db.call(store.get_draft, name))["definition"])
+        version = job.get("version")  # scheduled refresh of a live version's web knowledge
+        if version:
+            defn = schema.parse_definition((await db.call(store.get_version, name, version))["definition"])
+            sid = compose.versioned_source_id(name, ctx_id, version)
+        else:
+            defn = schema.parse_definition((await db.call(store.get_draft, name))["definition"])
+            sid = compose.web_source_id(name, ctx_id)
         fctx = defn.context(ctx_id)
-        sid = compose.web_source_id(name, ctx_id)
         try:
             res = await gov.runtime.post("/internal/v1/knowledge/scan", {
                 "source_id": sid, "sources": [w.model_dump() for w in fctx.web_sources],
-                "embedding_model": settings.web_embedding_model})
+                "hints": compose.scan_hints(fctx), "embedding_model": settings.web_embedding_model})
             status = "completed"
         except RuntimeError as e:
             res, status = {"error": str(e), "pages": 0, "chunks": 0, "report": []}, "error"
@@ -972,14 +977,15 @@ def create_app(
         def save(tx: Tx) -> None:
             if status == "completed":
                 store.upsert_catalog(tx, "knowledge", sid, {
-                    "kind": "pgvector", "title": f"Web pages: {name} / {fctx.name}",
+                    "kind": "pgvector", "title": f"Web pages: {name} / {fctx.name}" + (f" (v{version})" if version else ""),
                     "description": ", ".join(w.url for w in fctx.web_sources)[:500],
                     "config": {"embedding_model": res.get("embedding_model", "mock-embedding"), "dimensions": 768},
                     "data_classification": "public", "owner_bu": bu, "status": "active"}, actor)
             tx.execute("UPDATE web_scans SET status = ?, pages = ?, chunks = ?, details = ? WHERE id = ?",
                        (status, res.get("pages", 0), res.get("chunks", 0), dumps(res), scan_id))
-            store.audit(tx, actor, "context.scan", f"agent/{name}",
-                        {"context": ctx_id, "status": status, "pages": res.get("pages", 0)})
+            store.audit(tx, actor, "context.refresh" if version else "context.scan", f"agent/{name}",
+                        {"context": ctx_id, "status": status, "pages": res.get("pages", 0),
+                         **({"version": version} if version else {})})
 
         await db.call(save)
         if status == "completed":
@@ -991,6 +997,25 @@ def create_app(
 
     async def task_scan(request: Request, c: Caller) -> Response:
         return _json(await run_scan(await body(request)))
+
+    async def rescan_due(request: Request, c: Caller) -> Response:
+        """Called daily (Cloud Scheduler): re-scan the web pages of live versions whose contexts ask
+        for a refresh every N days. Which sites are read stays versioned; only their content is renewed."""
+        plan = await db.call(store.refresh_plan)
+        started = []
+        for item in plan:
+            scan_id = new_id("scan_")
+            await db.call(lambda tx, i=item, s=scan_id: tx.execute(
+                "INSERT INTO web_scans (id, agent_name, context_id, source_id, status, started_by, started_at) "
+                "VALUES (?, ?, ?, ?, 'running', 'scheduler', ?)", (s, i["agent"], i["context"], i["source_id"], now_iso())))
+            job = {"scan_id": scan_id, "agent": item["agent"], "context": item["context"], "actor": "scheduler",
+                   "version": item["version"]}
+            if request.query_params.get("wait", "false").lower() == "true":
+                await run_scan(job)
+            else:
+                await gov.tasks.enqueue("/internal/v1/tasks/scan", job, task_id=scan_id)
+            started.append({**item, "scan_id": scan_id})
+        return _json({"started": started})
 
     async def add_test_case(request: Request, c: Caller) -> Response:
         """Append one case to a suite (created if missing) — used by "Save as test" in the preview."""
@@ -1271,6 +1296,7 @@ def create_app(
         Route(f"{A}/ops/stats", api(ops_stats)),
         Route(f"{A}/agents/{{name}}/evals/cases", api(add_test_case), methods=["POST"]),
         Route("/internal/v1/tasks/scan", internal(task_scan), methods=["POST"]),
+        Route("/internal/v1/tasks/rescan-due", internal(rescan_due), methods=["POST"]),
         Route("/internal/v1/resolve/{name}/{alias}", internal(resolve)),
         Route("/internal/v1/agents", internal(internal_agents)),
         Route("/internal/v1/tasks/eval-run", internal(task_eval_run), methods=["POST"]),

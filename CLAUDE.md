@@ -34,7 +34,7 @@ Everything below is implemented. The original `eap_core` was not available, so i
   pgvector knowledge, atomic budget counters, runs table, `/internal/v1/execute`, `/internal/v1/events`,
   MCP server at `/mcp`.
 - `infra/terraform` (passes `terraform validate` on google/google-beta 6.50; console via IAP on Cloud Run by default, optional HTTPS LB), `cloudbuild.yaml`, `docker-compose.yml`, Dockerfiles.
-- `tests/`: 68 tests (unit, in-process e2e with both apps wired over ASGI, MCP, Postgres 16 + pgvector).
+- `tests/`: 78 tests (+2 Postgres) (unit, in-process e2e with both apps wired over ASGI, MCP, Postgres 16 + pgvector).
   Run the Postgres tests with `EAP_TEST_PG_DSN=...`.
 
 - Agent Studio (2026-11-05): functional contexts per agent (`FunctionalContext` in schema; composed
@@ -59,6 +59,22 @@ Everything below is implemented. The original `eap_core` was not available, so i
   `agent.version_live` webhooks, secrets by name from env (`external_agent_secrets`).
   See `docs/external-agents.md`.
 
+- Business units (2026-11-20, `docs/business-units.md`):
+  - Directory: migration `004_directory`, `governor/directory.py`, People screen, `member` role,
+    disabled users.
+  - BU variants: `eap_core/variants.py`, migration `005_variants`. The core has `customization`; a
+    variant has `extends` (pinned core version) and `overlay`. Composed in `store.effective()` /
+    `release_payload`, so the runtime is unchanged. A variant is owned and released by its BU's
+    functional experts (`require_editor`); it is rebased onto newer cores.
+  - Chat: dev sign-in cookie or IAP, BU picker from `/internal/v1/users/{email}/profile`, BU catalog
+    (`store.chat_catalog`, a variant replaces its core). `X-EAP-User-BU` is checked by the runtime;
+    `InvokeRequest.user` profile is added to the prompt.
+  - Web: site mode smart crawl (`webscan.crawl_site`: robots, sitemap, relevance hints, include/exclude),
+    `web_refresh_days` + daily `rescan-due` (Cloud Scheduler `scheduler.tf`), live web search
+    (`runtime/websearch.py`, Gemini/Vertex Google Search grounding, mock locally; not for
+    confidential/restricted agents).
+  - New schema fields are dropped from the canonical form at their defaults (hash-stable).
+
 ## Open items
 1. Verify the Vertex model IDs and regional availability for europe-west4, then flip catalog models from
    `preview` to `active` (see `docs/models.md`). Not possible from the build session (docs host blocked).
@@ -77,7 +93,9 @@ Everything below is implemented. The original `eap_core` was not available, so i
    `channelData.eap_context`, connector/flow steps, Entra v2 tokens). A2A protocol not implemented
    (A2A agents are tested like HTTP). The guardrail engine stays in the runtime (served by the edge)
    rather than moving into `eap_core`.
-6. Hardening backlog: OpenTelemetry tracing export, per-agent / per-user rate limits, GCS-backed
+6. Verify Google Search grounding request/response details (`google_search` tool, groundingMetadata)
+   against the current Gemini / Vertex docs, and Cloud Scheduler OIDC to the internal-only governor.
+7. Hardening backlog: OpenTelemetry tracing export, per-agent / per-user rate limits, GCS-backed
    upload of large eval datasets, console tests in a browser.
 
 ## Conventions

@@ -203,3 +203,9 @@ variable "external_agent_secrets" {
     error_message = "Use environment-variable style names: upper case, digits and underscores."
   }
 }
+
+variable "web_refresh_schedule" {
+  description = "Cron schedule (Europe/Amsterdam) for refreshing live agents' web knowledge."
+  type        = string
+  default     = "17 3 * * *"
+}

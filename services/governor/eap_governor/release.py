@@ -42,6 +42,11 @@ def validate(tx: Tx, defn: schema.AgentDefinition, owner_bu: str) -> dict[str, A
     policy = store.effective_policy(tx, owner_bu)
     catalog = store.catalog_subset(tx, defn)
     violations += [v.model_dump() for v in check_definition(defn, policy, catalog)]
+    for i, c in enumerate(defn.contexts):
+        if c.web_search.enabled and defn.data_classification in ("confidential", "restricted"):
+            violations.append({"code": "web_search.classification", "path": f"contexts[{i}].web_search",
+                               "message": f"context {c.id}: live web search sends people's questions to an external "
+                                          f"search service; not allowed for {defn.data_classification} agents"})
     for i, b in enumerate(defn.bindings.agents):
         try:
             store.get_agent(tx, b.name)

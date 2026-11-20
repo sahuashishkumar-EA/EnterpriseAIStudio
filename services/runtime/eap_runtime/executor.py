@@ -88,6 +88,7 @@ class Services:
     knowledge: KnowledgeStore
     budgets: Budgets
     runs: RunStore
+    web: Any = None  # WebSearcher (live web search for functional contexts)
 
 
 Emitter = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -235,7 +236,9 @@ class Execution:
     async def grounding(self, query: str) -> str:
         """Reference material from the functional context's scanned web pages ([n] citations)."""
         refs = compose.knowledge_refs(self.defn, self.fctx, self.release.get("version"))
-        if not refs:
+        ws = self.fctx.web_search if self.fctx else None
+        searching = bool(ws and ws.enabled and self.svc.web is not None)
+        if not refs and not searching:
             return ""
         t0 = time.time()
         lines: list[str] = []
@@ -257,11 +260,38 @@ class Execution:
                 self.sources.append(Source(id=h["id"], title=h.get("title", ""), uri=h.get("uri", ""),
                                            snippet=o.text[:300], score=round(float(h["score"]), 4), knowledge_ref=ref))
                 lines.append(f"[{n}] {h.get('title') or h.get('uri')} ({h.get('uri', '')})\n{o.text[:2500]}")
-        await self.step("retrieval", ",".join(refs), "ok", t0, hits=len(lines))
+        if refs:
+            await self.step("retrieval", ",".join(refs), "ok", t0, hits=len(lines))
+        if searching and (ws.when == "always" or len(lines) < 2):
+            await self.web_search(query, lines)
         if not lines:
             return ""
         return ("\n\n---\nReference material (use it when relevant; cite as [n]; if it does not cover the "
                 "question, say so rather than guessing):\n\n" + "\n\n".join(lines))
+
+    async def web_search(self, query: str, lines: list[str]) -> None:
+        """Live web search (functional context option), added to the reference material."""
+        ws = self.fctx.web_search
+        t0 = time.time()
+        try:
+            results = await self.svc.web.search(query, allowed=ws.allowed_domains, blocked=ws.blocked_domains,
+                                                max_results=ws.max_results, language=self.fctx.behavior.language)
+        except Exception as e:  # the web must not break the conversation
+            self.warn(f"web search failed: {e}")
+            await self.step("retrieval", "web search", "error", t0, error=str(e)[:200])
+            return
+        kept = 0
+        for r in results:
+            o = self.enforcer.text("retrieval", r.text, raise_on_block=False)
+            if o.blocked or not o.text.strip():
+                continue
+            n = len(self.sources) + 1
+            self.sources.append(Source(id=r.uri or f"web-search-{n}", title=r.title, uri=r.uri, snippet=o.text[:300],
+                                       knowledge_ref="web-search"))
+            lines.append(f"[{n}] {r.title} ({r.uri or 'summary of the search results'})\n{o.text[:2500]}")
+            kept += 1
+        await self.step("retrieval", "web search", "ok", t0, query=query[:200], hits=kept,
+                        domains=ws.allowed_domains or ["any"])
 
     # ----------------------------------------------------------------------- model
 

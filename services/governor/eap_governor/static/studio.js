@@ -246,11 +246,24 @@ async function tabStudio(agent) {
   // knowledge: web sources + notes
   const webBox = h("div", {});
   const scanBox = h("div", { class: "scan-status" });
-  const renderWeb = () => webBox.replaceChildren(...ctx.web_sources.map((w, i) => h("div", { class: "web-row" },
-    (() => { const u = h("input", { value: w.url, placeholder: "https://www.example.com/products" }); u.addEventListener("input", () => { w.url = u.value.trim(); changed(); }); return u; })(),
-    (() => { const n = h("input", { type: "number", min: 1, max: 25, value: w.max_pages || 5, title: "max pages", class: "num" }); n.addEventListener("input", () => { w.max_pages = Number(n.value || 5); changed(); }); return n; })(),
-    toggle(w.same_domain_only !== false, "same site only", (v) => { w.same_domain_only = v; changed(); }),
-    h("button", { class: "danger", onclick: () => { ctx.web_sources.splice(i, 1); changed(); renderWeb(); } }, "Remove"))));
+  const renderWeb = () => webBox.replaceChildren(...ctx.web_sources.map((w, i) => {
+    w.mode = w.mode || "page"; w.include = w.include || []; w.exclude = w.exclude || [];
+    const site = w.mode === "site";
+    const pages = h("input", { type: "number", min: 1, max: site ? 200 : 25, value: w.max_pages || 5, title: "max pages", class: "num" });
+    pages.addEventListener("input", () => { w.max_pages = Math.min(Number(pages.value || 5), site ? 200 : 25); changed(); });
+    return h("div", { class: "web-src" },
+      h("div", { class: "web-row" },
+        (() => { const u = h("input", { value: w.url, placeholder: "https://www.example.com/products" }); u.addEventListener("input", () => { w.url = u.value.trim(); changed(); }); return u; })(),
+        h("label", { class: "small muted" }, "max pages ", pages),
+        h("button", { class: "danger", onclick: () => { ctx.web_sources.splice(i, 1); changed(); renderWeb(); } }, "Remove")),
+      segmented([["page", "This page", "The page and a few pages it links to (max 25)"],
+        ["site", "Whole site — smart", "Reads the sitemap, follows the links most relevant to this context, skips what robots.txt forbids (max 200)"]],
+        w.mode, (v) => { w.mode = v; if (v === "site" && (w.max_pages || 5) < 30) w.max_pages = 50; if (v === "page") w.max_pages = Math.min(w.max_pages || 5, 25); changed(); renderWeb(); }),
+      site ? h("div", { class: "grid2" },
+        field("Only pages containing (optional)", chips(w.include, "e.g. /products/", changed)),
+        field("Skip pages containing", chips(w.exclude, "e.g. /careers", changed))) :
+        toggle(w.same_domain_only !== false, "stay on the same site", (v) => { w.same_domain_only = v; changed(); }));
+  }));
   renderWeb();
   const loadScans = async () => {
     try {
@@ -282,7 +295,11 @@ async function tabStudio(agent) {
         await api("POST", `/agents/${agent.name}/contexts/${selectedId}/scan`);
         loadScans();
       }) }, "Scan now")),
+    h("div", { class: "row-btns" }, h("span", { class: "small muted" }, "Keep live answers fresh:"),
+      select([["0", "re-scan manually"], ["1", "re-scan daily"], ["7", "re-scan weekly"], ["30", "re-scan monthly"]],
+        String(ctx.web_refresh_days || 0), (v) => { ctx.web_refresh_days = Number(v); changed(); })),
     scanBox,
+    webSearchBox(ctx, changed),
     h("h4", {}, "Facts & FAQ"), notesBox,
     h("button", { onclick: () => { ctx.notes.push({ title: "", text: "" }); changed(); renderNotes(); } }, "+ Note"));
 
@@ -526,3 +543,25 @@ async function tabOverview(agent) {
 
 window.tabStudio = tabStudio;
 window.tabOverview = tabOverview;
+
+
+// Live web search for one functional context: any site, or only / never the listed ones.
+function webSearchBox(ctx, changed) {
+  ctx.web_search = ctx.web_search || { enabled: false, when: "auto", allowed_domains: [], blocked_domains: [], max_results: 5 };
+  const ws = ctx.web_search;
+  ws.allowed_domains = ws.allowed_domains || []; ws.blocked_domains = ws.blocked_domains || [];
+  const body = h("div", {});
+  const render = () => body.replaceChildren(...(!ws.enabled ? [] : [
+    field("When", segmented([["auto", "When needed", "Only when the pages and facts above don't cover the question"],
+      ["always", "Every question", "Always look up the latest information"]], ws.when || "auto", (v) => { ws.when = v; changed(); })),
+    h("div", { class: "grid2" },
+      field("Only these sites (empty = the whole web)", chips(ws.allowed_domains, "e.g. ing.nl", changed)),
+      field("Never these sites", chips(ws.blocked_domains, "e.g. reddit.com", changed))),
+    h("p", { class: "muted small" }, "🔒 People's questions are sent to a search service (Google Search via Gemini). Not allowed for confidential or restricted agents. Answers cite the pages found.")]));
+  const on = h("input", { type: "checkbox", checked: !!ws.enabled });
+  on.addEventListener("change", () => { ws.enabled = on.checked; changed(); render(); });
+  render();
+  return h("div", { class: "web-search" }, h("h4", {}, "🌐 Search the web live"),
+    h("label", { class: "toggle" }, on, h("span", {}, "Let the agent search the web while answering")), body);
+}
+window.webSearchBox = webSearchBox;
