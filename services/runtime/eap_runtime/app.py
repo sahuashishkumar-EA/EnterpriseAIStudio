@@ -175,6 +175,10 @@ def create_app(
         routing_key = req.session_id or (parent.trace_id if parent else uuid.uuid4().hex)
         rel = pick_release(bundle, routing_key)
         d = rel["definition"]
+        platform = (d.get("hosting") or {}).get("platform", "internal")
+        if platform != "internal":
+            raise Forbidden(f"agent {name} runs on {platform}; reach it through that platform "
+                            "(the platform governs it via /gov/v1)")
         if parent is not None:
             if not d.get("exposure", {}).get("callable_by_agents", True):
                 raise Forbidden(f"agent {name} is not callable by agents")
@@ -590,6 +594,12 @@ def create_app(
         Route("/internal/v1/knowledge/scan", wrap(knowledge_scan), methods=["POST"]),
         Route("/internal/v1/knowledge/copy", wrap(knowledge_copy), methods=["POST"]),
     ]
+    from . import govapi
+
+    routes += govapi.build_routes(resolver=resolver, runs=svc.runs, settings=settings, caller=caller,
+                                  service_name=service_name, outer=wrap)
+    if settings.edge:  # public deployment for external platforms (e.g. Copilot Studio)
+        routes = [r for r in routes if r.path in ("/healthz", "/mcp") or r.path.startswith("/gov/v1/")]
     app = Starlette(routes=routes)
     app.state.svc = svc
     app.state.settings = settings

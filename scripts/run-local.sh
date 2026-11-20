@@ -44,7 +44,7 @@ DATABASE_URL="sqlite:///$DATA/runtime.db" PORT=8081 EAP_GOVERNOR_URL=http://127.
 pids+=($!)
 DATABASE_URL="sqlite:///$DATA/governor.db" PORT=8080 EAP_RUNTIME_URL=http://127.0.0.1:8081 \
   EAP_EVENTS_PUSH_URLS=http://127.0.0.1:8081/internal/v1/events EAP_EVENTS_PUSH_DEV_USER=governor \
-  EAP_BOOTSTRAP_ADMINS=admin@example.com EAP_RELAXED_RELEASE=true EAP_CHAT_URL=http://localhost:8082/ \
+  EAP_BOOTSTRAP_ADMINS=admin@example.com EAP_RELAXED_RELEASE=true EAP_CHAT_URL=http://localhost:8082/ EAP_EDGE_URL=http://localhost:8081 \
   EAP_WEB_EMBEDDING_MODEL="$EMBED" \
   "$PY" -c "from eap_governor.app import main; main()" > "$DATA/governor.log" 2>&1 &
 pids+=($!)

@@ -250,13 +250,16 @@ async def run_cases(
     judge_model: str,
     models_catalog: dict[str, dict[str, Any]],
     concurrency: int = 4,
+    target: Any = None,
 ) -> dict[str, Any]:
+    """Run cases on the platform runtime, or on `target` (an externally hosted agent, see external.py).
+    LLM-judge assertions always run on the platform runtime."""
     sem = asyncio.Semaphore(concurrency)
 
     async def one(case: dict[str, Any]) -> dict[str, Any]:
         async with sem:
             try:
-                result = await runtime.execute(
+                result = await (target or runtime).execute(
                     {"release": release, "policy": policy, "input": case["input"], "principal": principal,
                      "agent": release["definition"]["name"], "context": case.get("context")}
                 )

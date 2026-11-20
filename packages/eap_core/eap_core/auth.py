@@ -212,7 +212,9 @@ class Authenticator:
         if isinstance(roles, str):
             roles = [r for r in roles.replace(" ", ",").split(",") if r]
         return Principal(
-            sub=claims["sub"], email=claims.get("email"), kind="user", mode="oidc", roles=list(roles), claims=claims
+            sub=claims["sub"], email=claims.get("email"),
+            # app-only tokens (Entra ID client credentials: idtyp=app) are services, e.g. a Copilot Studio connector
+            kind="service" if claims.get("idtyp") == "app" else "user", mode="oidc", roles=list(roles), claims=claims
         )
 
     def service_name(self, p: Principal) -> str | None:

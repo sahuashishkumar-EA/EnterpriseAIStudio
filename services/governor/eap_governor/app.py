@@ -43,12 +43,37 @@ class Gov:
     publisher: Publisher
     runtime: RuntimeClient
     tasks: TaskQueue
+    http_transport: httpx.AsyncBaseTransport | None = None  # external agents (tests inject one)
 
     async def emit(self, event_type: str, **data: Any) -> None:
         try:
             await self.publisher.publish(Event(event_type=event_type, data=data))
         except Exception:
             log.exception("publishing %s failed", event_type)
+        if event_type == "alias.moved" and data.get("agent") and data.get("version"):
+            await self.notify_external(data)
+
+    async def notify_external(self, data: dict[str, Any]) -> None:
+        """Tell an externally hosted agent's platform that a new version is live (signed webhook)."""
+        from . import external
+
+        try:
+            v = await self.db.call(store.get_version, data["agent"], data["version"])
+            hosting = (v["definition"] or {}).get("hosting") or {}
+            if hosting.get("platform", "internal") == "internal" or not hosting.get("webhook_url"):
+                return
+            base = self.settings.edge_url.rstrip("/")
+            event = {"event": "agent.version_live", "agent": data["agent"], "alias": data.get("alias"),
+                     "version": data["version"], "canary_version": data.get("canary_version"),
+                     "content_hash": v.get("content_hash"),
+                     "profile_url": f"{base}/gov/v1/agents/{data['agent']}/profile" if base else None,
+                     "at": now_iso()}
+            status = await external.notify(hosting, event, self.http_transport)
+            await self.db.call(lambda tx: store.audit(tx, "governor", "webhook.sent", f"agent/{data['agent']}",
+                                                      {"url": hosting["webhook_url"], "status": status,
+                                                       "version": data["version"]}))
+        except Exception:
+            log.exception("change webhook for %s failed", data.get("agent"))
 
 
 @dataclass
@@ -82,6 +107,7 @@ def create_app(
     publisher: Publisher | None = None,
     runtime_transport: httpx.AsyncBaseTransport | None = None,
     tasks: TaskQueue | None = None,
+    external_transport: httpx.AsyncBaseTransport | None = None,
 ) -> Starlette:
     settings = settings or Settings.from_env()
     db = db or Database(expand_url(settings.database_url))
@@ -99,6 +125,7 @@ def create_app(
         publisher=publisher or publisher_from_env(),
         runtime=RuntimeClient(settings.runtime_url, settings.runtime_auth, transport=runtime_transport),
         tasks=tasks or queue_from_env(),
+        http_transport=external_transport,
     )
 
     # ----------------------------------------------------------------- plumbing
@@ -390,6 +417,8 @@ def create_app(
         if prep is None:
             return
         try:
+            from . import external
+
             out = await evals.run_cases(
                 gov.runtime,
                 prep["release"],
@@ -399,6 +428,7 @@ def create_app(
                 principal=prep["principal"],
                 judge_model=settings.judge_model,
                 models_catalog=prep["models"],
+                target=external.target_for(prep["release"]["definition"], gov.http_transport),
             )
             await db.call(release.record_eval_run, {"id": run_id, "status": "completed", **out})
         except Exception as e:
@@ -659,7 +689,7 @@ def create_app(
     async def get_settings(request: Request, c: Caller) -> Response:
         return _json({"relaxed_release": settings.relaxed_release, "chat_url": settings.chat_url,
                       "web_embedding_model": settings.web_embedding_model,
-                      "dev_auth": "dev" in settings.auth.modes})
+                      "dev_auth": "dev" in settings.auth.modes, "edge_url": settings.edge_url})
 
     async def list_bus(request: Request, c: Caller) -> Response:
         known = await db.call(store.known_bus)

@@ -20,6 +20,7 @@ class Settings:
     relaxed_release: bool = False
     web_embedding_model: str = "mock-embedding"
     chat_url: str = ""  # link to the chat app from the console
+    edge_url: str = ""  # public governance API for external agents (runtime in EAP_EDGE mode)
     service_name: str = "governor"
     base_url: str = "http://localhost:8080"
 
@@ -38,5 +39,6 @@ class Settings:
             relaxed_release=e.get("EAP_RELAXED_RELEASE", "false").lower() == "true",
             web_embedding_model=e.get("EAP_WEB_EMBEDDING_MODEL", "mock-embedding"),
             chat_url=e.get("EAP_CHAT_URL", ""),
+            edge_url=e.get("EAP_EDGE_URL", ""),
             base_url=e.get("EAP_BASE_URL", "http://localhost:8080"),
         )

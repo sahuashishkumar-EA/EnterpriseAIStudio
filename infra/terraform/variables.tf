@@ -173,3 +173,33 @@ variable "google_ai_api_key" {
   default     = ""
   sensitive   = true
 }
+
+# ------------------------------------------------------------------ external agents (edge)
+
+variable "enable_edge" {
+  description = "Deploy the public governance API for agents hosted elsewhere (e.g. Copilot Studio)."
+  type        = bool
+  default     = false
+}
+
+variable "edge_oidc_issuer" {
+  description = "OIDC issuer for edge callers, e.g. Entra ID https://login.microsoftonline.com/<tenant-id>/v2.0"
+  type        = string
+  default     = ""
+}
+
+variable "edge_oidc_audience" {
+  description = "Expected audience of edge tokens, e.g. api://<app-id> of the app registration exposing the API."
+  type        = string
+  default     = ""
+}
+
+variable "external_agent_secrets" {
+  description = "Names of secrets for external agents (hosting.auth_secret / webhook_secret), e.g. [\"DIRECTLINE_HR_COPILOT\"]. Values are added with gcloud."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for s in var.external_agent_secrets : can(regex("^[A-Z][A-Z0-9_]{1,62}$", s))])
+    error_message = "Use environment-variable style names: upper case, digits and underscores."
+  }
+}

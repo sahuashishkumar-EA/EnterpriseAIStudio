@@ -208,3 +208,8 @@ a.kpi:hover { border-color: var(--accent); text-decoration: none; }
 .sw-ok { background: var(--accent); } .sw-fail { background: var(--bad); }
 table.mini { width: 100%; font-size: 13px; } table.mini td { padding: 2px 4px; border: 0; } table.mini td:nth-child(odd) { color: var(--muted); }
 @media (max-width: 700px) { .dash-grid { grid-template-columns: 1fr; } .q-cell { max-width: 160px; } .runs-table th:nth-child(4), .runs-table td:nth-child(4) { display: none; } }
+
+/* batch 5: hosting */
+.howto { margin-top: 10px; background: var(--code); border-radius: var(--radius); padding: 8px 12px; }
+.howto summary { cursor: pointer; font-weight: 600; } .howto ol { margin: 8px 0 0; padding-left: 20px; } .howto li { margin: 4px 0; }
+.howto code { word-break: break-all; }

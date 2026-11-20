@@ -34,7 +34,7 @@ Everything below is implemented. The original `eap_core` was not available, so i
   pgvector knowledge, atomic budget counters, runs table, `/internal/v1/execute`, `/internal/v1/events`,
   MCP server at `/mcp`.
 - `infra/terraform` (passes `terraform validate` on google/google-beta 6.50; console via IAP on Cloud Run by default, optional HTTPS LB), `cloudbuild.yaml`, `docker-compose.yml`, Dockerfiles.
-- `tests/`: 54 tests (unit, in-process e2e with both apps wired over ASGI, MCP, Postgres 16 + pgvector).
+- `tests/`: 68 tests (unit, in-process e2e with both apps wired over ASGI, MCP, Postgres 16 + pgvector).
   Run the Postgres tests with `EAP_TEST_PG_DSN=...`.
 
 - Agent Studio (2026-11-05): functional contexts per agent (`FunctionalContext` in schema; composed
@@ -43,6 +43,21 @@ Everything below is implemented. The original `eap_core` was not available, so i
   pii refuse), web scanning into pgvector (`runtime/webscan.py`, SSRF-guarded), live preview, chat
   history, dev-mode quick publish (`EAP_RELAXED_RELEASE`), model Test button, `services/chat` demo app
   with delegated identity (`X-EAP-On-Behalf-Of`, `EAP_DELEGATING_SERVICES`). See `docs/studio.md`.
+
+- UX batches (2026-11-20):
+  - Monitor: inbox for hand-overs and 👎 (assign / resolve / turn into a test), a conversations
+    explorer, and per-agent dashboards. Runtime migration `004_ops`; governor `/api/v1/ops/*` proxies
+    the runtime's `/internal/v1/ops/*`, scoped by BU.
+  - Chat 👍/👎.
+  - Plain-language errors (`static/monitor.js`).
+- External agents (Copilot Studio / HTTP): `hosting` block in the schema. It is omitted from the
+  canonical form when internal, so existing hashes don't change. The runtime serves
+  `/gov/v1/agents/{name}/{profile,check/input,check/output,runs}` (`runtime/govapi.py`): runs with
+  mode `external`, callers from `hosting.callers`, and invoke/MCP refused for external agents.
+  `EAP_EDGE=true` restricts the runtime to `/gov/v1` + `/mcp` (Terraform `edge.tf`, Entra ID OIDC,
+  `invoker_iam_disabled`). Governor `external.py`: Direct Line and HTTP eval targets, HMAC-signed
+  `agent.version_live` webhooks, secrets by name from env (`external_agent_secrets`).
+  See `docs/external-agents.md`.
 
 ## Open items
 1. Verify the Vertex model IDs and regional availability for europe-west4, then flip catalog models from
@@ -58,7 +73,11 @@ Everything below is implemented. The original `eap_core` was not available, so i
    from outside the VPC, knowledge ingestion.
 4. Knowledge ingestion trusts the caller-supplied `embedding_model`. Consider resolving it from the
    catalog entry via the governor.
-5. Hardening backlog: OpenTelemetry tracing export, per-agent / per-user rate limits, GCS-backed
+5. External agents: verify against a real Copilot Studio tenant (Direct Line reply matching,
+   `channelData.eap_context`, connector/flow steps, Entra v2 tokens). A2A protocol not implemented
+   (A2A agents are tested like HTTP). The guardrail engine stays in the runtime (served by the edge)
+   rather than moving into `eap_core`.
+6. Hardening backlog: OpenTelemetry tracing export, per-agent / per-user rate limits, GCS-backed
    upload of large eval datasets, console tests in a browser.
 
 ## Conventions

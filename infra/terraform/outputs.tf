@@ -45,3 +45,8 @@ output "service_accounts" {
 output "sql_instance" {
   value = google_sql_database_instance.pg.connection_name
 }
+
+output "edge_url" {
+  description = "Public governance API for external agents (empty unless enable_edge)."
+  value       = local.edge_url
+}

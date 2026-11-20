@@ -118,7 +118,10 @@ async function tabReleaseFlow(agent) {
     const r = await api("POST", `/agents/${name}/evals/run?wait=true`, { target: "draft" });
     toast(r.runs.map((x) => `${x.passed}/${x.total} passed`).join(", ")); route();
   });
+  const ext = ((agent.draft.definition.hosting || {}).platform || "internal") !== "internal";
+  const extName = ext ? PLATFORMS[agent.draft.definition.hosting.platform] : "";
   const step1 = h("section", { class: "step panel" }, h("h2", {}, "① Test the latest changes"),
+    ext ? h("p", { class: "muted small" }, `Tests run against the real agent on ${extName} (its configured endpoint), not a simulation.`) : "",
     suites.length ? h("table", {}, chk.evals.map((e) => h("tr", {}, h("td", {}, e.suite), h("td", { class: "muted" }, e.required ? "required" : "optional"),
       h("td", { class: e.passed ? "pass" : "fail" }, e.run ? `${e.passed ? "✓" : "✗"} ${e.run.passed}/${e.run.total} passed` : "not run on these changes")))) :
       h("p", {}, "No tests yet. Add a suite below, or use “Save as test” on answers in the Functional studio's live preview."),
@@ -151,6 +154,7 @@ async function tabReleaseFlow(agent) {
     toast(golive.checked ? `Version ${r.version} is live` : `Version ${r.version} published (not live)`); route();
   });
   const step3 = h("section", { class: "step panel" }, h("h2", {}, "③ Go live"),
+    ext ? h("p", { class: "muted small" }, `Going live publishes the new instructions and guardrails for ${extName}: its profile changes and the change webhook (if set) tells it to refresh. Guardrail checks apply immediately.`) : "",
     noChanges ? h("p", { class: "muted" }, prod ? `Nothing new — version ${prod.version} is live and matches your latest changes.` : "Nothing new to publish.") : h("div", {},
       h("p", {}, chk.ok ? h("span", { class: "pass" }, `✓ Ready: this becomes version ${chk.next_version}.`) : h("span", { class: "muted" }, `Finish steps ① and ② first. This will become version ${chk.next_version}.`)),
       h("div", { class: "row" }, field("Changelog", changelog), technical ? field("Version bump", bump) : "",

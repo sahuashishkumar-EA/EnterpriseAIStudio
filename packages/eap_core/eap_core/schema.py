@@ -210,6 +210,35 @@ class Exposure(_Model):
     invokers: list[str] = Field(default_factory=lambda: ["owner_bu"])
 
 
+HOSTING_PLATFORMS = ("internal", "copilot_studio", "http", "a2a")
+
+
+class Hosting(_Model):
+    """Where the agent actually runs. "internal" = the platform runtime executes it. Any other platform
+    means the agent is built and run elsewhere (e.g. Microsoft Copilot Studio) and the governor still
+    owns its behaviour: the external agent pulls its published profile, calls the check APIs around
+    each turn, reports runs, and is tested through `endpoint` before every go-live."""
+
+    platform: Literal["internal", "copilot_studio", "http", "a2a"] = "internal"
+    # http: URL that takes {"message", "context", "history"} and returns {"output"} (or {"reply"}).
+    # copilot_studio: Direct Line base URL (empty = https://directline.botframework.com/v3/directline).
+    endpoint: str = ""
+    # Name of a secret (environment variable / Secret Manager secret mounted as one) with the bearer
+    # token or Direct Line secret for `endpoint`. Never the secret itself.
+    auth_secret: str = ""
+    # Principals allowed to use this agent's governance API (/gov/v1): service names, OIDC client ids
+    # (e.g. the Entra app id of a Copilot Studio connector) or user:<email>.
+    callers: list[str] = Field(default_factory=list)
+    # Called (HMAC-SHA256 signed) whenever a new version goes live, so the external platform can refresh.
+    webhook_url: str = ""
+    webhook_secret: str = ""  # secret name, as auth_secret
+    notes: str = ""
+
+    @property
+    def external(self) -> bool:
+        return self.platform != "internal"
+
+
 class AgentDefinition(_Model):
     schema_version: Literal["1"] = SCHEMA_VERSION
     name: str
@@ -227,6 +256,7 @@ class AgentDefinition(_Model):
     exposure: Exposure = Field(default_factory=Exposure)
     contexts: list[FunctionalContext] = Field(default_factory=list)
     default_context: str | None = None
+    hosting: Hosting = Field(default_factory=Hosting)
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -258,7 +288,10 @@ class AgentDefinition(_Model):
         return self.contexts[0] if self.contexts else None
 
     def canonical(self) -> dict[str, Any]:
-        return self.model_dump(mode="json", exclude_none=False)
+        data = self.model_dump(mode="json", exclude_none=False)
+        if data.get("hosting") == Hosting().model_dump(mode="json"):
+            data.pop("hosting")  # internal agents keep the hashes they had before hosting existed
+        return data
 
     def content_hash(self) -> str:
         return content_hash(self.canonical())

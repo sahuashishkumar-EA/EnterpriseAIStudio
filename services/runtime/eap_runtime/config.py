@@ -30,6 +30,8 @@ class Settings:
     web_ssrf_protection: bool = True
     service_name: str = "runtime"
     embedding_location: str = "europe-west4"
+    # Edge mode: the public deployment for external agents only serves /gov/v1, /mcp and /healthz.
+    edge: bool = False
 
     @staticmethod
     def from_env() -> "Settings":
@@ -55,5 +57,6 @@ class Settings:
             task_callers=lst("EAP_TASK_CALLERS", "runtime"),
             trusted_services=lst("EAP_TRUSTED_SERVICES", "governor,runtime"),
             delegating_services=lst("EAP_DELEGATING_SERVICES", "chat"),
+            edge=e.get("EAP_EDGE", "false").lower() == "true",
             embedding_location=e.get("EAP_EMBEDDING_LOCATION", "europe-west4"),
         )

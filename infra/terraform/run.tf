@@ -17,6 +17,7 @@ locals {
     EAP_RELAXED_RELEASE       = tostring(local.relaxed_release)
     EAP_WEB_EMBEDDING_MODEL   = local.google_ai ? "google_ai:gemini-embedding-001" : var.web_embedding_model
     EAP_CHAT_URL              = local.chat_url
+    EAP_EDGE_URL              = local.edge_url
     EAP_RUNTIME_URL           = local.runtime_url
     EAP_RUNTIME_AUTH          = "google_id"
     EAP_EVENTS_TOPIC          = google_pubsub_topic.events.id
@@ -130,6 +131,18 @@ resource "google_cloud_run_v2_service" "governor" {
           }
         }
       }
+      dynamic "env" { # external agents: Direct Line secrets, bearer tokens, webhook signing keys
+        for_each = toset(var.external_agent_secrets)
+        content {
+          name = env.value
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.external[env.value].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
       startup_probe {
         http_get {
           path = "/healthz"
@@ -141,7 +154,8 @@ resource "google_cloud_run_v2_service" "governor" {
     }
   }
 
-  depends_on = [google_secret_manager_secret_iam_member.access, google_sql_database.db]
+  depends_on = [google_secret_manager_secret_iam_member.access, google_secret_manager_secret_iam_member.external_governor,
+  google_sql_database.db]
 }
 
 resource "google_cloud_run_v2_service" "runtime" {

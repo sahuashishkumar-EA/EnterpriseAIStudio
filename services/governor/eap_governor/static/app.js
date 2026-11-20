@@ -203,7 +203,8 @@ async function viewAgent(name, tab) {
   if (tab === "technical" && !tabs.some(([k]) => k === "technical")) tabs.splice(2, 0, ["technical", "🛠️ Technical setup"]);
   return h("div", {},
     h("div", { class: "crumbs" }, h("a", { href: "#/agents" }, "Agents"), " / ", agent.owner_bu),
-    h("h1", {}, agent.name, agent.aliases.some((a) => a.alias === "prod") ? h("span", { class: "badge ok", style: "margin-left:10px" }, "live") : h("span", { class: "badge", style: "margin-left:10px" }, "not live")),
+    h("h1", {}, agent.name, agent.aliases.some((a) => a.alias === "prod") ? h("span", { class: "badge ok", style: "margin-left:10px" }, "live") : h("span", { class: "badge", style: "margin-left:10px" }, "not live"),
+      hostingBadge(agent.draft.definition)),
     h("div", { class: "tabs" }, tabs.map(([k, label]) => h("a", { href: `#/agents/${name}/${k}`, class: k === tab ? "active" : "" }, label))),
     body);
 }
@@ -227,7 +228,7 @@ function tabDefinition(agent) {
     ta.addEventListener("change", () => { try { Object.keys(def).forEach((k) => delete def[k]); Object.assign(def, JSON.parse(ta.value)); ta.style.borderColor = ""; } catch { ta.style.borderColor = "var(--bad)"; } });
     return h("div", { class: "panel" }, ta);
   };
-  const formEditor = () => h("div", {}, sectionBasics(def), sectionPrompt(def), sectionModel(def), sectionPattern(def),
+  const formEditor = () => h("div", {}, sectionBasics(def), sectionHosting(def), sectionPrompt(def), sectionModel(def), sectionPattern(def),
     sectionBindings(def), sectionGuardrails(def), sectionLimits(def), sectionOutput(def), sectionContract(def));
 
   const save = () => act(async () => {
@@ -284,6 +285,56 @@ function sectionBasics(def) {
       field("Expose over MCP", (() => { def.exposure = def.exposure || {}; const c = h("input", { type: "checkbox", checked: def.exposure.mcp }); c.onchange = () => (def.exposure.mcp = c.checked); return c; })()),
       field("Callable by other agents", (() => { def.exposure = def.exposure || {}; const c = h("input", { type: "checkbox", checked: def.exposure.callable_by_agents !== false }); c.onchange = () => (def.exposure.callable_by_agents = c.checked); return c; })()),
       field("Offer in chat app", (() => { def.exposure = def.exposure || {}; const c = h("input", { type: "checkbox", checked: def.exposure.chat }); c.onchange = () => (def.exposure.chat = c.checked); return c; })())));
+}
+
+// ------------------------------------------------------------- hosting (external agents)
+
+const PLATFORMS = { internal: "This platform", copilot_studio: "Microsoft Copilot Studio", http: "Other platform (HTTP)", a2a: "A2A agent (preview)" };
+function hostingBadge(def) {
+  const p = (def.hosting || {}).platform || "internal";
+  return p === "internal" ? "" : h("span", { class: "badge", style: "margin-left:8px", title: "Built and run outside the platform; governed here." }, "runs on " + PLATFORMS[p]);
+}
+
+function sectionHosting(def) {
+  def.hosting = def.hosting || { platform: "internal" };
+  const hs = def.hosting;
+  const body = h("div", {});
+  const csv = (key, placeholder) => { const i = h("input", { placeholder, value: (hs[key] || []).join(", ") }); i.onchange = () => (hs[key] = i.value.split(",").map((s) => s.trim()).filter(Boolean)); return i; };
+  const render = () => {
+    const p = hs.platform || "internal";
+    if (p === "internal") {
+      body.replaceChildren(h("p", { class: "muted" }, "The platform runtime executes this agent with the model, orchestration and tools below."));
+      return;
+    }
+    const edge = (state.settings.edge_url || "https://<edge-url>").replace(/\/$/, "");
+    const ep = (path) => h("code", {}, `${edge}/gov/v1/agents/${def.name}/${path}`);
+    body.replaceChildren(
+      h("p", { class: "muted" }, "The agent is built and run on ", PLATFORMS[p], ". The governor still owns its behaviour: ",
+        "the published instructions and guardrails, tests before every go-live, monitoring and audit. The model, orchestration and tools below are used only for the live preview here."),
+      h("div", { class: "row" },
+        field(p === "copilot_studio" ? "Direct Line URL (empty = Microsoft's public endpoint)" : "Agent endpoint (tests send it each case)",
+          bind(hs, "endpoint", h("input", { placeholder: p === "copilot_studio" ? "https://directline.botframework.com/v3/directline" : "https://agent.example.com/chat" }))),
+        field(p === "copilot_studio" ? "Secret name holding the Direct Line secret" : "Secret name holding the bearer token",
+          bind(hs, "auth_secret", h("input", { placeholder: p === "copilot_studio" ? "DIRECTLINE_HR_COPILOT" : "HR_AGENT_TOKEN" })))),
+      h("div", { class: "row" },
+        field("Allowed callers of the governance API (service names, Entra app ids, user:<email>)", csv("callers", "e.g. 2f6c…-app-id, copilot-connector")),
+        field("Change webhook (called when a new version goes live)", bind(hs, "webhook_url", h("input", { placeholder: "https://prod-00.westeurope.logic.azure.com/…" }))),
+        field("Secret name for signing the webhook", bind(hs, "webhook_secret", h("input", { placeholder: "HR_COPILOT_WEBHOOK_SECRET" })))),
+      h("p", { class: "muted small" }, "Secrets are referenced by name only. Store the value in Secret Manager and mount it on the governor as an environment variable of that name."),
+      h("details", { class: "howto", open: true }, h("summary", {}, "How the external agent connects"),
+        h("ol", {},
+          h("li", {}, "At start-up, and whenever the webhook fires, read the governed instructions: GET ", ep("profile?context=<context id>"),
+            ". Use ", h("code", {}, "instructions"), " as the agent's instructions (system prompt). The response has an ETag, so poll with If-None-Match."),
+          h("li", {}, "Before answering each message: POST ", ep("check/input"), " with ", h("code", {}, '{"message","context","user"}'),
+            ". If ", h("code", {}, "decision"), " is respond or block, send ", h("code", {}, "message"), " to the user and stop. Otherwise continue with ", h("code", {}, "text"), " (personal data redacted)."),
+          h("li", {}, "Before showing the answer: POST ", ep("check/output"), " with ", h("code", {}, '{"check_id","output","context"}'), " and show the returned ", h("code", {}, "output"), "."),
+          h("li", {}, "If the platform cannot call the checks, report each finished turn: POST ", ep("runs"), ". Monitor and the dashboard then cover it."),
+          p === "copilot_studio" ? h("li", {}, "Copilot Studio: call these from a custom connector or a Power Automate flow (topic “Conversation Start” for the profile, “On message received” for check/input). Authenticate with an Entra ID app (client credentials). Its app id goes into Allowed callers. The tests in Release use the Direct Line secret from Settings → Security → Web channel security.") : "",
+          h("li", {}, "Full guide: docs/external-agents.md in the repository."))));
+  };
+  render();
+  return h("div", { class: "panel" }, h("h2", {}, "Where this agent runs"),
+    field("Platform", select(Object.entries(PLATFORMS), hs.platform || "internal", (v) => { hs.platform = v; render(); })), body);
 }
 
 function sectionPrompt(def) {
