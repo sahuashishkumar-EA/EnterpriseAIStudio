@@ -14,7 +14,7 @@ from typing import Any, Awaitable, Callable
 import httpx
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -1058,8 +1058,13 @@ def create_app(
         except Exception as e:  # pragma: no cover
             return _json({"ok": False, "error": str(e)}, 503)
 
+    from eap_core import versioned_index
+
+    index_html, ui_version = versioned_index(HERE / "static")
+
     async def index(request: Request) -> Response:
-        return FileResponse(HERE / "static" / "index.html")
+        # always revalidate the page; assets are fingerprinted (?v=) so they change with every release
+        return HTMLResponse(index_html, headers={"Cache-Control": "no-cache", "X-UI-Version": ui_version})
 
     A = "/api/v1"
     routes = [
