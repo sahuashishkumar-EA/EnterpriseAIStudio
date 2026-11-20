@@ -59,3 +59,17 @@ button { font: inherit; cursor: pointer; }
 .rate .thumb:hover { opacity: 1; border-color: var(--accent); }
 .rate input { flex: 1; min-width: 160px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font: inherit; font-size: 13px; background: var(--panel); color: var(--ink); }
 .rate .ghost { padding: 3px 10px; font-size: 13px; }
+
+.gate { display: grid; place-items: center; min-height: 100dvh; padding: 16px; }
+.gate-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 24px; width: min(420px, 100%); display: flex; flex-direction: column; gap: 12px; }
+.gate-card h2 { margin: 0; font-size: 18px; } .gate-card p { margin: 0; }
+.gate-card input { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; background: var(--bg); color: var(--ink); }
+.gate-card .send { padding: 10px 18px; }
+.bu-list { display: flex; flex-direction: column; gap: 8px; }
+.bu-choice { text-align: left; border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 10px; padding: 10px 12px; font: inherit; }
+.bu-choice:hover, .bu-choice.default { border-color: var(--accent); } .bu-choice small { display: block; color: var(--muted); font-size: 12px; }
+.bu-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: -8px 0 14px; font-size: 13px; }
+.bu-chip { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 999px; padding: 2px 10px; }
+.linkish { border: 0; background: none; color: var(--accent); padding: 0; font: inherit; font-size: 13px; cursor: pointer; }
+.edition { margin-left: 6px; font-size: 11px; font-weight: 500; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0 6px; vertical-align: middle; }
+.welcome { color: var(--ink); font-weight: 500; }

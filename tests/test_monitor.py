@@ -38,14 +38,15 @@ def test_feedback_escalations_and_monitor():
             await g.put("/api/v1/agents/helpdesk/draft/contexts/default", json={"context": ctx}, headers=ME)
             q = await g.post("/api/v1/agents/helpdesk/quick-publish", json={}, headers=ME)
             assert q.status_code == 200, q.text
+            await g.put("/api/v1/users/ann@example.com/memberships/it", json={"roles": ["member"]}, headers=ME)
 
     asyncio.run(setup())
     chat = chat_app(ChatSettings(governor_url="http://governor", runtime_url="http://runtime", auth=AuthConfig(modes=["dev"])),
                     governor_transport=httpx.ASGITransport(app=p.governor), runtime_transport=httpx.ASGITransport(app=p.runtime))
     with TestClient(chat) as c:
-        ok = c.post("/api/chat", headers=USER, json={"agent": "helpdesk", "message": "My laptop is slow"}).json()
-        esc = c.post("/api/chat", headers=USER, json={"agent": "helpdesk", "message": "this is urgent"}).json()
-        bad = c.post("/api/chat", headers=USER, json={"agent": "helpdesk", "message": "VPN keeps dropping"}).json()
+        ok = c.post("/api/chat", headers=USER, json={"bu": "it", "agent": "helpdesk", "message": "My laptop is slow"}).json()
+        esc = c.post("/api/chat", headers=USER, json={"bu": "it", "agent": "helpdesk", "message": "this is urgent"}).json()
+        bad = c.post("/api/chat", headers=USER, json={"bu": "it", "agent": "helpdesk", "message": "VPN keeps dropping"}).json()
         assert c.post("/api/feedback", headers=USER, json={"run_id": ok["run_id"], "rating": "up"}).status_code == 200
         assert c.post("/api/feedback", headers=USER, json={"run_id": bad["run_id"], "rating": "down",
                                                             "comment": "did not mention the VPN client"}).status_code == 200

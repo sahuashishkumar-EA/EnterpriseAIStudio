@@ -246,6 +246,7 @@ def create_app(
         c.roles.require(bu, "functional_author")
 
         def run(tx: Tx) -> dict[str, Any]:
+            directory.ensure_bu(tx, bu, c.id)
             name = store.create_variant(tx, core, bu, (b.get("name") or "").strip() or None, c.id)
             return _agent_detail(tx, name)
 
@@ -804,6 +805,9 @@ def create_app(
         channel = request.query_params.get("channel", "mcp")
         if channel not in ("mcp", "chat"):
             raise Invalid("channel must be mcp or chat")
+        bu = request.query_params.get("bu")
+        if channel == "chat" and bu:  # chat app after sign-in: what this BU's members may use
+            return _json({"agents": await db.call(store.chat_catalog, alias, bu)})
         return _json({"agents": await db.call(store.mcp_exposed, alias, channel)})
 
     # ------------------------------------------------------- studio (two personas)

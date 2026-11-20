@@ -29,6 +29,8 @@ def test_chat_app_end_to_end():
             await g.delete("/api/v1/agents/helpdesk/draft/contexts/default", headers=ME)
             q = await g.post("/api/v1/agents/helpdesk/quick-publish", json={}, headers=ME)
             assert q.status_code == 200, q.text
+            m = await g.put("/api/v1/users/ann@example.com/memberships/it", json={"roles": ["member"]}, headers=ME)
+            assert m.status_code == 200, m.text
 
     asyncio.run(go())
     app = chat_app(ChatSettings(governor_url="http://governor", runtime_url="http://runtime", auth=AuthConfig(modes=["dev"])),
@@ -36,19 +38,21 @@ def test_chat_app_end_to_end():
     with TestClient(app) as c:
         assert c.get("/").status_code == 200 and "Agent Chat" in c.get("/").text
         assert c.get("/api/me").status_code == 401
-        agents = c.get("/api/agents", headers=USER).json()["agents"]
+        assert c.get("/api/agents", headers=USER).status_code == 400  # which BU?
+        assert c.get("/api/agents?bu=hr", headers=USER).status_code == 403  # not a member
+        agents = c.get("/api/agents?bu=it", headers=USER).json()["agents"]
         assert [a["name"] for a in agents] == ["helpdesk"]  # only chat-enabled agents
         assert {x["id"] for x in agents[0]["contexts"]} == {"staff", "visitors"}
-        r = c.post("/api/chat", headers=USER, json={"agent": "helpdesk", "context": "staff", "message": "My laptop is slow",
+        r = c.post("/api/chat", headers=USER, json={"bu": "it", "agent": "helpdesk", "context": "staff", "message": "My laptop is slow",
                                                     "history": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "Hello"}]}).json()
         assert r["status"] == "ok" and r["context"] == "staff" and r["version"] == "1.0.0" and r["reply"]
         assert any(s["kind"] == "model" for s in r["steps"])  # orchestration trace for "How this answer was made"
-        esc = c.post("/api/chat", headers=USER, json={"agent": "helpdesk", "context": "staff", "message": "this is urgent"}).json()
+        esc = c.post("/api/chat", headers=USER, json={"bu": "it", "agent": "helpdesk", "context": "staff", "message": "this is urgent"}).json()
         assert esc["reply"] == "Paging the on-call engineer." and "escalated" in esc["flags"]
-        v = c.post("/api/chat", headers=USER, json={"agent": "helpdesk", "context": "visitors", "message": "this is urgent"}).json()
+        v = c.post("/api/chat", headers=USER, json={"bu": "it", "agent": "helpdesk", "context": "visitors", "message": "this is urgent"}).json()
         assert v["context"] == "visitors" and v["flags"] == []
         # agents not enabled for chat cannot be reached through the chat app
-        no = c.post("/api/chat", headers=USER, json={"agent": "customer-profile", "message": "C-1001"})
+        no = c.post("/api/chat", headers=USER, json={"bu": "it", "agent": "customer-profile", "message": "C-1001"})
         assert no.status_code == 403
         # the run is recorded on behalf of the end user, not the chat service
         run = asyncio.run(p.runtime.state.svc.runs.get(r["run_id"]))

@@ -7,10 +7,12 @@
   <link rel="stylesheet" href="/static/chat.css">
 </head>
 <body>
-  <div class="app">
+  <div class="gate" id="gate" hidden></div>
+  <div class="app" id="app" hidden>
     <aside class="side" id="side">
       <div class="brand">💬 <span id="title">Agent Chat</span></div>
       <div class="who" id="who"></div>
+      <div class="bu-row" id="buRow"></div>
       <div class="label">Agents</div>
       <div id="agents" class="agents"><p class="muted">Loading…</p></div>
     </aside>

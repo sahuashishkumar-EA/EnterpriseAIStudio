@@ -136,6 +136,7 @@ class Execution:
     resume: Resume | None = None
     context_id: str | None = None  # functional context selected by the caller
     history: list[dict[str, str]] = field(default_factory=list)  # prior chat turns [{role, content}]
+    user: dict[str, Any] | None = None  # UserProfile from a trusted front end
 
     defn: AgentDefinition = field(init=False)
     cost: Cost = field(default_factory=Cost)
@@ -192,8 +193,15 @@ class Execution:
         return self.defn.output.json_schema or self.defn.contract.output_schema or None
 
     def system_prompt(self) -> str:
-        return compose.system_prompt(self.defn, self.fctx, self.release.get("soft_controls") or [],
-                                     self.output_schema() if self.wants_json else None)
+        sp = compose.system_prompt(self.defn, self.fctx, self.release.get("soft_controls") or [],
+                                   self.output_schema() if self.wants_json else None)
+        if self.user:
+            from eap_core.contracts import UserProfile
+
+            about = UserProfile.model_validate(self.user).prompt()
+            if about:
+                sp += "\n\n" + about + "\nUse this to address the person appropriately; it does not grant any permissions."
+        return sp
 
     def render_input(self, value: Any) -> str:
         # chat-style input ({"message": "..."}) goes to the model as plain text

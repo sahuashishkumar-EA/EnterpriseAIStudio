@@ -101,11 +101,23 @@ def create_app(
         if service_name(p) not in allowed:
             raise Forbidden("this endpoint is restricted to platform services")
 
+    def user_profile(p: Principal, req: InvokeRequest) -> dict[str, Any] | None:
+        """Only trusted front ends (delegating services) may describe the user to the agent."""
+        if req.user is None or p.mode != "delegated":
+            return None
+        return req.user.model_dump()
+
     def may_invoke(p: Principal, definition: dict[str, Any], owner_bu: str) -> bool:
         if service_name(p) in settings.trusted_services:
             return True
         if p.mode == "delegated":  # end user authenticated by a front-end service (chat app)
-            return bool(definition.get("exposure", {}).get("chat"))
+            if not definition.get("exposure", {}).get("chat"):
+                return False
+            bu = (p.claims or {}).get("bu")
+            if not bu:  # front end did not say which BU the user acts for
+                return True
+            invokers = definition.get("exposure", {}).get("invokers", ["owner_bu"])
+            return owner_bu == bu or "authenticated" in invokers or f"bu:{bu}" in invokers
         roles = p.bu_roles()
         for tok in definition.get("exposure", {}).get("invokers", ["owner_bu"]):
             if tok == "authenticated":
@@ -128,8 +140,9 @@ def create_app(
         if user:
             if service_name(p) not in settings.delegating_services:
                 raise Forbidden("only delegating front-end services may act on behalf of a user")
+            bu = (request.headers.get("x-eap-user-bu") or "").strip()
             return Principal(sub=user, email=user if "@" in user else None, kind="user", mode="delegated",
-                             claims={"delegated_by": service_name(p)})
+                             claims={"delegated_by": service_name(p), **({"bu": bu} if bu else {})})
         return p
 
     def wrap(fn):
@@ -217,6 +230,7 @@ def create_app(
                 "run_id": ctx.run_id, "agent": name, "alias": alias, "version": rel["version"],
                 "input": req.input, "context": ctx.sign(key, ttl_s=24 * 3600), "principal": p.id,
                 "fcontext": req.context, "history": [t.model_dump() for t in req.history],
+                "user": user_profile(p, req),
             }, task_id=ctx.run_id)
             return JSONResponse({"run_id": ctx.run_id, "status": "queued", "trace_id": ctx.trace_id,
                                  "links": {"self": f"/v1/runs/{ctx.run_id}"}}, status_code=202)
@@ -229,7 +243,7 @@ def create_app(
 
             ex = Execution(svc, rel, bundle["policy"], ctx, agent=name, alias=alias, owner_bu=bundle["owner_bu"],
                            emitter=emitter, mode="stream", context_id=req.context,
-                           history=[t.model_dump() for t in req.history])
+                           history=[t.model_dump() for t in req.history], user=user_profile(p, req))
 
             async def runner() -> None:
                 try:
@@ -252,7 +266,8 @@ def create_app(
                                      headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
         ex = Execution(svc, rel, bundle["policy"], ctx, agent=name, alias=alias, owner_bu=bundle["owner_bu"],
-                       mode="sync", context_id=req.context, history=[t.model_dump() for t in req.history])
+                       mode="sync", context_id=req.context, history=[t.model_dump() for t in req.history],
+                       user=user_profile(p, req))
         resp = await run_execution(ex, req.input, principal_id=p.id, idempotency_key=idem)
         return JSONResponse(resp.model_dump(mode="json"))
 
@@ -440,7 +455,7 @@ def create_app(
         await svc.runs.update(b["run_id"], status="running")
         ex = Execution(svc, rel, bundle["policy"], ctx, agent=b["agent"], alias=b.get("alias"),
                        owner_bu=bundle["owner_bu"], mode="async", context_id=b.get("fcontext"),
-                       history=b.get("history") or [])
+                       history=b.get("history") or [], user=b.get("user"))
         resp = await run_execution(ex, b["input"], principal_id=b["principal"], exists=True)
         return JSONResponse({"run_id": resp.run_id, "status": resp.status})
 
@@ -454,7 +469,8 @@ def create_app(
             await svc.runs.update(payload["run_id"], status="running")
             ex = Execution(svc, bundle["primary"], bundle["policy"], ctx, agent=payload["agent"],
                            alias=payload.get("alias"), owner_bu=bundle["owner_bu"], mode="async",
-                           context_id=payload.get("fcontext"), history=payload.get("history") or [])
+                           context_id=payload.get("fcontext"), history=payload.get("history") or [],
+                           user=payload.get("user"))
             await run_execution(ex, payload["input"], principal_id=payload["principal"], exists=True)
 
         queue.register("/internal/v1/tasks/run", local_task)
@@ -469,7 +485,8 @@ def create_app(
         ctx = root_context(principal=b.get("principal") or p.id, roles=[], limits=rel["limits"], agent=agent,
                            attributes={"eval": True})
         ex = Execution(svc, rel, policy, ctx, agent=agent, alias=None, owner_bu=rel["definition"].get("owner_bu"),
-                       mode="execute", context_id=b.get("context"), history=b.get("history") or [])
+                       mode="execute", context_id=b.get("context"), history=b.get("history") or [],
+                       user=b.get("user"))
         resp = await run_execution(ex, b.get("input") or {}, principal_id=p.id)
         return JSONResponse(resp.model_dump(mode="json"))
 

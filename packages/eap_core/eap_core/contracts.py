@@ -16,6 +16,26 @@ class ChatTurn(BaseModel):
     content: str = Field(max_length=20000)
 
 
+class UserProfile(BaseModel):
+    """Who the agent is talking to (set by a trusted front end, e.g. the chat app after sign-in).
+    Used to adapt answers; never used for authorization."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(default="", max_length=100)
+    bu: str = Field(default="", max_length=40)
+    bu_name: str = Field(default="", max_length=100)
+    language: str = Field(default="", max_length=20)
+    job_title: str = Field(default="", max_length=100)
+
+    def prompt(self) -> str:
+        clean = lambda v: " ".join(str(v).split())  # noqa: E731 - one line per field, no injected newlines
+        rows = [("Name", self.name), ("Business unit", self.bu_name or self.bu), ("Job title", self.job_title),
+                ("Preferred language", self.language)]
+        lines = [f"- {k}: {clean(v)}" for k, v in rows if v]
+        return ("# About the person you are talking to\n" + "\n".join(lines)) if lines else ""
+
+
 class InvokeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -27,6 +47,7 @@ class InvokeRequest(BaseModel):
     callback_url: str | None = None
     context: str | None = None  # functional context id; default context when omitted
     history: list[ChatTurn] = Field(default_factory=list, max_length=40)
+    user: UserProfile | None = None  # set by trusted front ends; adapts the answer
 
 
 class ResumeRequest(BaseModel):

@@ -882,3 +882,33 @@ def rebase_variant(tx: Tx, name: str, version: str | None, actor: str) -> dict[s
     out = save_draft(tx, name, fresh, actor)
     audit(tx, actor, "variant.rebase", f"agent/{name}", {"core": core, "from": ext.get("version"), "to": version})
     return out
+
+
+def chat_catalog(tx: Tx, alias: str, bu: str) -> list[dict[str, Any]]:
+    """Live, chat-enabled agents a member of `bu` may use: the BU's own agents and variants, plus
+    agents shared with the BU. A BU variant replaces its core in the list ("the BU's edition")."""
+    rows = []
+    for a in tx.fetchall("SELECT agent_name, version FROM aliases WHERE alias = ?", (alias,)):
+        agent = get_agent(tx, a["agent_name"])
+        if agent.get("archived"):
+            continue
+        defn = schema.parse_definition(get_version(tx, a["agent_name"], a["version"])["definition"])
+        if not defn.exposure.chat:
+            continue
+        inv = defn.exposure.invokers
+        if not (agent["owner_bu"] == bu or "authenticated" in inv or f"bu:{bu}" in inv):
+            continue
+        eff = effective(tx, defn)
+        rows.append({
+            "name": a["agent_name"], "alias": alias, "version": a["version"], "owner_bu": agent["owner_bu"],
+            "variant_of": agent.get("variant_of"),
+            "display_name": defn.metadata.get("display_name") or agent.get("variant_of") or a["agent_name"],
+            "edition": f"{bu} edition" if agent.get("variant_of") else None,
+            "description": eff.description or eff.contract.description,
+            "input_schema": eff.contract.input_schema or {"type": "object"},
+            "default_context": defn.default_context,
+            "contexts": [{"id": c.id, "name": c.name, "description": c.description, "starters": c.starters}
+                         for c in defn.contexts],
+        })
+    replaced = {r["variant_of"] for r in rows if r["variant_of"] and r["owner_bu"] == bu}
+    return sorted([r for r in rows if r["name"] not in replaced], key=lambda r: r["display_name"])
