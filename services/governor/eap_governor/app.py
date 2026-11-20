@@ -166,8 +166,13 @@ def create_app(
 
     async def agents_create(request: Request, c: Caller) -> Response:
         b = await body(request)
-        bu = b.get("owner_bu") or ""
+        bu = (b.get("owner_bu") or "").strip()
+        if not bu:
+            raise Invalid("choose a business unit")
         c.roles.require(bu, "functional_author")
+        known = await db.call(store.known_bus) | {x for x in c.roles.grants if x != "*"}
+        if bu not in known and not c.roles.is_platform_admin():
+            raise Invalid(f"business unit '{bu}' does not exist yet; pick an existing one or ask a platform admin")
         await db.call(store.create_agent, b.get("name", ""), bu, b.get("description", ""), c.id, b.get("definition"))
         return _json(await db.call(lambda tx: _agent_detail(tx, b["name"])), 201)
 
@@ -467,6 +472,7 @@ def create_app(
             return res
 
         res = await db.call(run)
+        res["warnings"] = await snapshot_web(name, res["version"], c.id)
         await gov.emit("version.published", agent=name, version=res["version"], content_hash=res["content_hash"])
         if res.get("alias"):
             a = res["alias"]
@@ -652,7 +658,28 @@ def create_app(
 
     async def get_settings(request: Request, c: Caller) -> Response:
         return _json({"relaxed_release": settings.relaxed_release, "chat_url": settings.chat_url,
-                      "web_embedding_model": settings.web_embedding_model})
+                      "web_embedding_model": settings.web_embedding_model,
+                      "dev_auth": "dev" in settings.auth.modes})
+
+    async def list_bus(request: Request, c: Caller) -> Response:
+        known = await db.call(store.known_bus)
+        mine = {x for x in c.roles.grants if x != "*"}
+        visible = known | mine if c.roles.visible_bus() is None else (known | mine) & (c.roles.visible_bus() or set())
+        return _json({"bus": sorted(visible), "can_create": c.roles.is_platform_admin()})
+
+    async def snapshot_web(name: str, version: str, actor: str) -> list[str]:
+        """Freeze each context's scanned web pages for a newly published version."""
+        warnings: list[str] = []
+        for src, dst, entry in await db.call(store.web_snapshot_plan, name, version):
+            try:
+                await gov.runtime.post("/internal/v1/knowledge/copy", {"from": src, "to": dst})
+                fields = {k: entry[k] for k in ("kind", "description", "config", "data_classification", "owner_bu", "status")}
+                await db.call(store.upsert_catalog, "knowledge", dst,
+                              {**fields, "title": f"{entry['title']} (v{version})"}, actor)
+            except Exception as e:  # the version is published; grounding for it is missing
+                log.exception("web snapshot %s -> %s failed", src, dst)
+                warnings.append(f"web knowledge snapshot failed for {src}: {e}")
+        return warnings
 
     async def draft_technical(request: Request, c: Caller) -> Response:
         """Technical expert: save everything except functional contexts."""
@@ -853,6 +880,7 @@ def create_app(
 
         out = await db.call(ship)
         if out["published"]:
+            out["warnings"] = await snapshot_web(name, out["version"], c.id)
             await gov.emit("version.published", agent=name, version=out["version"], content_hash="")
         await gov.emit("alias.moved", agent=name, alias=alias, version=out["version"], canary_version=None,
                        canary_weight=0)
@@ -933,6 +961,7 @@ def create_app(
         Route(f"{A}/role-bindings", api(roles_delete), methods=["DELETE"]),
         Route(f"{A}/audit", api(audit)),
         Route(f"{A}/settings", api(get_settings)),
+        Route(f"{A}/bus", api(list_bus)),
         Route(f"{A}/agents/{{name}}/draft/technical", api(draft_technical), methods=["PUT"]),
         Route(f"{A}/agents/{{name}}/draft/contexts/{{ctx}}", api(draft_context_put), methods=["PUT"]),
         Route(f"{A}/agents/{{name}}/draft/contexts/{{ctx}}", api(draft_context_delete), methods=["DELETE"]),

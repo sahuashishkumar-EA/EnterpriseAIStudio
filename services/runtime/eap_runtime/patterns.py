@@ -33,7 +33,7 @@ async def rag(ex: Execution, inp: dict[str, Any]) -> Any:
     from eap_core.compose import knowledge_refs
     from eap_core.schema import KnowledgeBinding
 
-    kbs = [*ex.defn.bindings.knowledge, *(KnowledgeBinding(ref=r) for r in knowledge_refs(ex.defn, ex.fctx))]
+    kbs = [*ex.defn.bindings.knowledge, *(KnowledgeBinding(ref=r) for r in knowledge_refs(ex.defn, ex.fctx, ex.release.get("version")))]
     for kb in kbs:
         src = ex.catalog["knowledge"].get(kb.ref)
         if src is None:

@@ -340,6 +340,14 @@ def create_app(
         resp = await run_execution(ex, b.get("input") or {}, principal_id=p.id)
         return JSONResponse(resp.model_dump(mode="json"))
 
+    async def knowledge_copy(request: Request) -> Response:
+        """Governor snapshots a draft web index for a published version."""
+        p = await principal(request)
+        require_service(p, settings.execute_callers)
+        b = await request.json()
+        n = await svc.knowledge.copy_source(b["from"], b["to"])
+        return JSONResponse({"copied_chunks": n, "to": b["to"]})
+
     async def knowledge_scan(request: Request) -> Response:
         """Governor asks the runtime to (re)build a functional context's web knowledge."""
         p = await principal(request)
@@ -446,6 +454,7 @@ def create_app(
         Route("/internal/v1/events", wrap(events), methods=["POST"]),
         Route("/internal/v1/tasks/run", wrap(task_run), methods=["POST"]),
         Route("/internal/v1/knowledge/scan", wrap(knowledge_scan), methods=["POST"]),
+        Route("/internal/v1/knowledge/copy", wrap(knowledge_copy), methods=["POST"]),
     ]
     app = Starlette(routes=routes)
     app.state.svc = svc

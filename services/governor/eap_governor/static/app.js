@@ -55,8 +55,9 @@ function renderIdentity() {
         h("button", { class: "seg-opt" + (per === k ? " on" : ""), onclick: () => { setPersona(k); renderIdentity(); route(); } }, l))),
     state.settings.relaxed_release ? h("span", { class: "badge warn", title: "One person may author, approve and publish (audited)." }, "dev mode") : "",
     state.me ? h("span", {}, state.me.principal) : h("span", {}, "not signed in"),
-    h("span", { title: "Dev mode only: sent as X-Dev-* headers. Ignored behind IAP." }, "dev:"), user, roles,
-    h("button", { onclick: () => { setDevIdentity(user.value ? { user: user.value, roles: roles.value } : null); boot(); } }, "Use"));
+    ...((!state.me || state.settings.dev_auth) ? [
+      h("span", { title: "Local development only: sent as X-Dev-* headers." }, "dev:"), user, roles,
+      h("button", { onclick: () => { setDevIdentity(user.value ? { user: user.value, roles: roles.value } : null); boot(); } }, "Use")] : []));
 }
 
 async function loadShared() {
@@ -89,8 +90,19 @@ const routes = [
 ];
 
 let ready = Promise.resolve();
+let currentHash = location.hash;
+let skipGuard = false;
 async function route() {
   await ready; // never render a screen before identity, settings and catalog are loaded
+  // Screens with editors register state.dirty(); leaving them with unsaved edits asks first.
+  if (skipGuard) { skipGuard = false; if (location.hash === currentHash) return; }
+  if (state.dirty && state.dirty() && location.hash !== currentHash) {
+    if (!confirm("You have unsaved changes on this screen. Leave and discard them?")) {
+      skipGuard = true; location.hash = currentHash; return;
+    }
+  }
+  state.dirty = null; window.onbeforeunload = null;
+  currentHash = location.hash;
   const view = document.getElementById("view");
   if (!state.me) {
     view.replaceChildren(h("div", { class: "panel" }, h("h1", {}, "Sign in"),
@@ -108,10 +120,21 @@ async function route() {
 
 // ------------------------------------------------------------------------ agents
 
+function buPicker(info) {
+  const opts = info.bus.map((b) => [b, b]);
+  if (info.can_create) opts.push(["__new__", "+ New business unit…"]);
+  const sel = select([["", "— choose —"], ...opts], info.bus.length === 1 ? info.bus[0] : "", () => {});
+  const custom = h("input", { placeholder: "new business unit, e.g. retail", style: "display:none; margin-top:6px" });
+  sel.addEventListener("change", () => { custom.style.display = sel.value === "__new__" ? "" : "none"; });
+  const box = h("div", {}, sel, custom);
+  Object.defineProperty(box, "value", { get: () => (sel.value === "__new__" ? custom.value.trim().toLowerCase() : sel.value) });
+  return box;
+}
+
 async function viewAgents() {
-  const { agents } = await api("GET", "/agents");
+  const [{ agents }, buInfo] = await Promise.all([api("GET", "/agents"), api("GET", "/bus")]);
   const name = h("input", { placeholder: "customer-profile" });
-  const bu = h("input", { placeholder: "retail" });
+  const bu = buPicker(buInfo);
   const desc = h("input", { placeholder: "What the agent does" });
   return h("div", {},
     h("h1", {}, "Agents"),
@@ -164,6 +187,9 @@ async function viewAgent(name, tab) {
 function tabDefinition(agent) {
   const def = structuredClone(agent.draft.definition);
   let base = agent.draft.sections.technical;
+  let techDirty = false;
+  state.dirty = () => techDirty;
+  window.onbeforeunload = () => (techDirty ? "You have unsaved changes" : undefined);
   const status = h("div", { class: "muted" }, "Draft ", h("code", {}, agent.draft.content_hash.slice(0, 19)), " · edited by ", agent.draft.editors.join(", ") || "—");
   const result = h("div", {});
   let jsonMode = false;
@@ -186,7 +212,7 @@ function tabDefinition(agent) {
       if (e.status === 409) { toast("Someone else changed the technical setup since you opened it. Reload to see their changes.", true); return; }
       throw e;
     }
-    base = d.sections.technical;
+    base = d.sections.technical; techDirty = false;
     toast("Technical setup saved · " + d.content_hash.slice(0, 19));
     status.replaceChildren("Draft ", h("code", {}, d.content_hash.slice(0, 19)), " · edited by ", d.editors.join(", "));
   });
@@ -197,6 +223,7 @@ function tabDefinition(agent) {
         h("table", {}, r.violations.map((v) => h("tr", {}, h("td", {}, h("code", {}, v.code)), h("td", {}, v.path), h("td", {}, v.message))))));
   });
   render();
+  for (const ev of ["input", "change"]) container.addEventListener(ev, () => { techDirty = true; });
   return h("div", {},
     h("p", { class: "muted" }, "System-level context, model, orchestration, tools, technical guardrails, limits and output. ",
       "Functional contexts (role, behaviour, knowledge, boundaries) are edited in the ", h("a", { href: `#/agents/${agent.name}/studio` }, "Functional studio"),
@@ -421,7 +448,7 @@ async function tabRelease(agent) {
   const chk = await api("GET", `/agents/${agent.name}/release-check`);
   const comment = h("input", { placeholder: "Review comment" });
   const changelog = h("input", { placeholder: "What changed" });
-  const alias = h("input", { placeholder: "optional, e.g. staging" });
+  const alias = h("input", { value: "prod", placeholder: "leave empty to publish without going live" });
   const bump = select([["", `auto (${chk.required_bump})`], ["patch", "patch"], ["minor", "minor"], ["major", "major"]], "", () => {});
   return h("div", {},
     h("div", { class: "panel" }, h("h2", {}, "Release gate ", chk.ok ? badge("ready", "ok") : badge("blocked", "bad")),
@@ -440,7 +467,7 @@ async function tabRelease(agent) {
           h("button", { onclick: () => act(async () => { await api("POST", `/agents/${agent.name}/approvals`, { decision: "approve", comment: comment.value, content_hash: chk.content_hash }); toast("Approved"); route(); }) }, "Approve"),
           h("button", { class: "danger", onclick: () => act(async () => { await api("POST", `/agents/${agent.name}/approvals`, { decision: "reject", comment: comment.value, content_hash: chk.content_hash }); toast("Rejected"); route(); }) }, "Reject")))),
     h("div", { class: "panel" }, h("h2", {}, "Publish"),
-      h("div", { class: "row" }, field("Version bump", bump), field("Changelog", changelog), field("Point alias", alias),
+      h("div", { class: "row" }, field("Version bump", bump), field("Changelog", changelog), field("Go live as (alias)", alias),
         h("div", { style: "flex:0 0 auto" }, h("button", { class: "primary", disabled: !chk.ok, onclick: () => act(async () => {
           const r = await api("POST", `/agents/${agent.name}/publish`, { bump: bump.value || undefined, changelog: changelog.value, alias: alias.value || undefined });
           toast(`Published ${r.version}`); location.hash = `#/agents/${agent.name}/versions`;

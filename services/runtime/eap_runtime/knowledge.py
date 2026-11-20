@@ -133,6 +133,28 @@ class KnowledgeStore:
         await self.db.call(write)
         return {"source": source["id"], "documents": len({r[0] for r in rows}), "chunks": len(rows)}
 
+    async def copy_source(self, from_id: str, to_id: str) -> int:
+        """Snapshot one knowledge source into another (replaces the target)."""
+        pg = self.db.dialect == "postgres"
+
+        def run(tx: Tx) -> int:
+            tx.execute("DELETE FROM knowledge_chunks WHERE source_id = ?", (to_id,))
+            rows = tx.fetchall(
+                "SELECT doc_id, chunk_no, title, uri, content, metadata, embedding FROM knowledge_chunks "
+                "WHERE source_id = ?", (from_id,))
+            cols = "id, source_id, doc_id, chunk_no, title, uri, content, metadata, embedding, created_at"
+            for r in rows:
+                vals = [new_id("chk_"), to_id, r["doc_id"], r["chunk_no"], r["title"], r["uri"], r["content"],
+                        r["metadata"], r["embedding"], now_iso()]
+                if pg:
+                    tx.execute(f"INSERT INTO knowledge_chunks ({cols}, embedding_vec) VALUES "
+                               f"(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::vector)", (*vals, r["embedding"]))
+                else:
+                    tx.execute(f"INSERT INTO knowledge_chunks ({cols}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", vals)
+            return len(rows)
+
+        return await self.db.call(run)
+
     async def delete_source(self, source_id: str) -> int:
         return await self.db.call(lambda tx: tx.execute("DELETE FROM knowledge_chunks WHERE source_id = ?", (source_id,)))
 

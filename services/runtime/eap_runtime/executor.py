@@ -226,7 +226,7 @@ class Execution:
 
     async def grounding(self, query: str) -> str:
         """Reference material from the functional context's scanned web pages ([n] citations)."""
-        refs = compose.knowledge_refs(self.defn, self.fctx)
+        refs = compose.knowledge_refs(self.defn, self.fctx, self.release.get("version"))
         if not refs:
             return ""
         t0 = time.time()

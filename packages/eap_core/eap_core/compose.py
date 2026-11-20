@@ -137,11 +137,24 @@ def functional_guardrails(ctx: FunctionalContext | None) -> list[dict[str, Any]]
     return out
 
 
-def knowledge_refs(defn: AgentDefinition, ctx: FunctionalContext | None) -> list[str]:
-    """Knowledge sources to ground answers in: the context's scanned web pages."""
+DRAFT_VERSIONS = (None, "", "draft", "test", "judge")
+
+
+def versioned_source_id(agent: str, context_id: str, version: str | None) -> str:
+    """Scans write the draft index; publishing snapshots it per version, so re-scanning a
+    draft never changes what a live version answers from."""
+    base = web_source_id(agent, context_id)
+    if version in DRAFT_VERSIONS:
+        return base
+    suffix = "--v" + re.sub(r"[^0-9a-z]", "-", str(version).lower())
+    return base[: 63 - len(suffix)] + suffix
+
+
+def knowledge_refs(defn: AgentDefinition, ctx: FunctionalContext | None, version: str | None = None) -> list[str]:
+    """Knowledge sources to ground answers in: the context's scanned web pages (for this version)."""
     if ctx is None or not ctx.web_sources:
         return []
-    return [web_source_id(defn.name, ctx.id)]
+    return [versioned_source_id(defn.name, ctx.id, version)]
 
 
 def completeness(ctx: FunctionalContext) -> dict[str, Any]:

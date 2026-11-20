@@ -85,6 +85,14 @@ def list_agents(tx: Tx, bus: set[str] | None = None) -> list[dict[str, Any]]:
     return rows
 
 
+def known_bus(tx: Tx) -> set[str]:
+    """Business units that exist: owners of agents, BUs with role bindings or a policy overlay."""
+    bus = {r["owner_bu"] for r in tx.fetchall("SELECT DISTINCT owner_bu FROM agents")}
+    bus |= {r["bu"] for r in tx.fetchall("SELECT DISTINCT bu FROM role_bindings") if r["bu"] != "*"}
+    bus |= {r["scope"][3:] for r in tx.fetchall("SELECT scope FROM policies WHERE scope LIKE 'bu:%'")}
+    return bus
+
+
 def create_agent(tx: Tx, name: str, owner_bu: str, description: str, actor: str, definition: dict | None) -> None:
     if not schema.NAME_RE.match(name):
         raise Invalid("invalid agent name (lowercase letters, digits, dashes)")
@@ -511,7 +519,7 @@ def set_model_status(tx: Tx, model_id: str, status: str, actor: str, reason: str
     return flagged
 
 
-def catalog_subset(tx: Tx, defn: schema.AgentDefinition) -> dict[str, dict[str, dict[str, Any]]]:
+def catalog_subset(tx: Tx, defn: schema.AgentDefinition, version: str | None = None) -> dict[str, dict[str, dict[str, Any]]]:
     out: dict[str, dict[str, dict[str, Any]]] = {"models": {}, "tools": {}, "knowledge": {}}
     for mid in [defn.model.catalog_id, *defn.model.fallbacks]:
         r = tx.fetchone("SELECT * FROM catalog_models WHERE id = ?", (mid,))
@@ -521,10 +529,11 @@ def catalog_subset(tx: Tx, defn: schema.AgentDefinition) -> dict[str, dict[str, 
         r = tx.fetchone("SELECT * FROM catalog_tools WHERE id = ?", (t.ref,))
         if r:
             out["tools"][t.ref] = _cat_row(r)
-    from eap_core.compose import web_source_id
+    from eap_core.compose import versioned_source_id
 
     refs = [k.ref for k in defn.bindings.knowledge]
-    refs += [web_source_id(defn.name, c.id) for c in defn.contexts if c.web_sources]  # scanned web pages
+    # scanned web pages: the draft index for drafts, the version's snapshot for published versions
+    refs += [versioned_source_id(defn.name, c.id, version) for c in defn.contexts if c.web_sources]
     for ref in refs:
         r = tx.fetchone("SELECT * FROM catalog_knowledge WHERE id = ?", (ref,))
         if r:
@@ -676,8 +685,23 @@ def release_payload(tx: Tx, defn: schema.AgentDefinition, policy: Policy, **extr
         "limits": effective_limits(defn, policy),
         "guardrails": [g.model_dump(mode="json") for g in effective_guardrails(defn, policy)],
         "soft_controls": list(policy.soft_controls),
-        "catalog": catalog_subset(tx, defn),
+        "catalog": catalog_subset(tx, defn, extra.get("version")),
     }
+
+
+def web_snapshot_plan(tx: Tx, name: str, version: str) -> list[tuple[str, str, dict[str, Any]]]:
+    """(from_id, to_id, draft catalog entry) for every scanned context of a published version."""
+    from eap_core.compose import versioned_source_id, web_source_id
+
+    defn = schema.parse_definition(get_version(tx, name, version)["definition"])
+    out = []
+    for c in defn.contexts:
+        if not c.web_sources:
+            continue
+        src = tx.fetchone("SELECT * FROM catalog_knowledge WHERE id = ?", (web_source_id(name, c.id),))
+        if src:
+            out.append((src["id"], versioned_source_id(name, c.id, version), _cat_row(src)))
+    return out
 
 
 def resolve(tx: Tx, name: str, alias: str) -> dict[str, Any]:

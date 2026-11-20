@@ -183,8 +183,15 @@ async function tabStudio(agent) {
   const ctx = normalizeContext(original);
   let base = agent.draft.sections.contexts[selectedId] || "";
   let dirty = false;
+  let autosaveTimer = null;
+  let saving = false;
+  state.dirty = () => dirty;
   const saveState = h("span", { class: "muted" }, "All changes saved");
-  const changed = () => { dirty = true; saveState.textContent = "Unsaved changes"; saveState.className = "warn-text"; schedulePreview(); };
+  const changed = () => {
+    dirty = true; saveState.textContent = "Unsaved changes…"; saveState.className = "warn-text"; schedulePreview();
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => { if (dirty && !saving) save(true).catch(() => {}); }, 2500);
+  };
 
   // ---- cards
   const who = card("👤", "Who is this agent?", "Describe it the way you'd brief a new colleague.",
@@ -276,23 +283,27 @@ async function tabStudio(agent) {
     d.contexts = (d.contexts || []).map((c) => (c.id === selectedId ? Object.assign({}, ctx, { id: selectedId }) : c));
     return d;
   };
-  const save = async () => {
+  const save = async (auto) => {
+    if (!ctx.name.trim()) { saveState.textContent = "Name required to save"; return; }
+    saving = true;
     try {
       const d = await api("PUT", `/agents/${agent.name}/draft/contexts/${selectedId}`, { context: ctx, base });
       base = d.sections.contexts[selectedId]; agent.draft = d; dirty = false;
-      saveState.textContent = "All changes saved"; saveState.className = "muted";
-      toast("Context saved");
+      saveState.textContent = auto ? `Autosaved ${new Date().toLocaleTimeString()}` : "All changes saved"; saveState.className = "muted";
+      if (!auto) toast("Context saved");
     } catch (e) {
+      saveState.textContent = "Not saved"; saveState.className = "fail";
       if (e.status === 409) toast("Someone else changed this context since you opened it. Copy your edits, then reload.", true);
+      else if (auto) toast("Autosave failed: " + e.message, true);
       else throw e;
-    }
+    } finally { saving = false; }
   };
   const header = h("div", { class: "studio-head panel" },
     h("div", {}, h("h2", {}, ctx.name || selectedId), h("div", { class: "muted small" }, `context id: ${selectedId}`)),
     h("div", { class: "row-btns" }, saveState,
       def.default_context !== selectedId ? h("button", { onclick: () => act(async () => { await api("PUT", `/agents/${agent.name}/draft/default-context`, { context: selectedId }); toast("Default context set"); route(); }) }, "Make default") : "",
       h("button", { class: "danger", onclick: () => act(async () => { if (!confirm(`Delete context “${ctx.name}”?`)) return; await api("DELETE", `/agents/${agent.name}/draft/contexts/${selectedId}`); location.hash = `#/agents/${agent.name}/studio`; }) }, "Delete"),
-      h("button", { class: "primary", onclick: () => act(save) }, "Save context")));
+      h("button", { class: "primary", onclick: () => act(() => save(false)) }, "Save now")));
 
   // ---- right panel: completeness, live preview, what the model sees
   const meter = h("div", { class: "meter" });
