@@ -99,6 +99,18 @@ function textInput(obj, key, placeholder, onChange, long) {
   return el;
 }
 
+// Simple modal dialog. Returns a close() function.
+function modal(title, ...body) {
+  const close = () => overlay.remove();
+  const overlay = h("div", { class: "modal-overlay", onclick: (e) => { if (e.target === overlay) close(); } },
+    h("div", { class: "modal", role: "dialog", "aria-label": title },
+      h("div", { class: "modal-head" }, h("h2", {}, title), h("button", { class: "small-btn", onclick: close, "aria-label": "Close" }, "✕")),
+      ...body));
+  document.body.append(overlay);
+  const first = overlay.querySelector("input, textarea, button.primary"); if (first) first.focus();
+  return close;
+}
+
 const card = (icon, title, hint, ...body) => h("section", { class: "s-card" },
   h("div", { class: "s-card-head" }, h("span", { class: "s-icon", "aria-hidden": "true" }, icon), h("div", {}, h("h3", {}, title), hint ? h("p", { class: "muted" }, hint) : "")),
   ...body);
@@ -161,17 +173,31 @@ async function tabStudio(agent) {
     ...ctxs.map((c) => h("a", { class: "ctx-item" + (c.id === selectedId ? " on" : ""), href: `#/agents/${agent.name}/studio?ctx=${c.id}` },
       h("div", { class: "ctx-name" }, c.name || c.id, c.id === def.default_context ? h("span", { class: "badge ok", style: "margin-left:6px" }, "default") : ""),
       h("div", { class: "muted small" }, c.role || c.audience || c.id))),
-    h("div", { class: "side-new" }, h("label", {}, "New context from template"),
-      ...Object.entries(TEMPLATES).map(([k, t]) => h("button", { class: "tpl", onclick: () => newContext(t) }, k === "blank" ? "+ Blank" : "+ " + t.name))));
+    h("button", { class: "primary side-add", onclick: () => newContextDialog() }, "+ New context"));
 
-  const newContext = (tpl) => act(async () => {
-    const name = prompt("Name of the new context (e.g. 'Retail customers', 'Branch staff'):", tpl.name === "New context" ? "" : tpl.name);
-    if (!name) return;
-    let id = slug(name); while (ctxs.some((c) => c.id === id)) id += "-2";
-    await api("PUT", `/agents/${agent.name}/draft/contexts/${id}`, { context: Object.assign(structuredClone(tpl), { name }), base: "" });
-    toast(`Context “${name}” created`);
-    location.hash = `#/agents/${agent.name}/studio?ctx=${id}`;
-  });
+  const newContextDialog = () => {
+    let chosen = "support";
+    const nameIn = h("input", { placeholder: "e.g. Retail customers, Branch staff, Dutch-speaking visitors" });
+    const tplBox = h("div", { class: "tpl-grid" });
+    const renderTpl = () => tplBox.replaceChildren(...Object.entries(TEMPLATES).map(([k, t]) => h("button", {
+      class: "tpl-card" + (k === chosen ? " on" : ""), onclick: () => { chosen = k; if (!nameIn.value || Object.values(TEMPLATES).some((x) => x.name === nameIn.value)) nameIn.value = k === "blank" ? "" : t.name; renderTpl(); } },
+      h("b", {}, k === "blank" ? "Start blank" : t.name),
+      h("div", { class: "muted small" }, k === "blank" ? "Empty context; fill in everything yourself." : `${t.role || ""}${t.starters ? " · e.g. “" + t.starters[0] + "”" : ""}`))));
+    renderTpl();
+    nameIn.value = TEMPLATES[chosen].name;
+    const close = modal("New functional context",
+      h("p", { class: "muted" }, "A context is one audience or use case for this agent, with its own role, behaviour, knowledge and boundaries."),
+      field("Name", nameIn), h("label", {}, "Start from"), tplBox,
+      h("div", { class: "row-btns", style: "justify-content:flex-end; margin-top:12px" },
+        h("button", { onclick: () => close() }, "Cancel"),
+        h("button", { class: "primary", onclick: () => act(async () => {
+          const name = nameIn.value.trim(); if (!name) { nameIn.focus(); return; }
+          let id = slug(name); while (ctxs.some((c) => c.id === id)) id += "-2";
+          await api("PUT", `/agents/${agent.name}/draft/contexts/${id}`, { context: Object.assign(structuredClone(TEMPLATES[chosen]), { name }), base: "" });
+          close(); toast(`Context “${name}” created`);
+          location.hash = `#/agents/${agent.name}/studio?ctx=${id}`;
+        }) }, "Create context")));
+  };
 
   if (!selectedId) {
     root.append(sidebar(), h("div", { class: "studio-main" }, h("div", { class: "panel" }, h("h2", {}, "No functional context yet"),
@@ -230,6 +256,11 @@ async function tabStudio(agent) {
     try {
       const { scans } = await api("GET", `/agents/${agent.name}/contexts/${selectedId}/scans`);
       const s = scans[0];
+      if (s && s.status === "running") {
+        scanBox.replaceChildren(h("span", { class: "warn-text" }, "⏳ Scanning web pages… you can keep working; this updates by itself."));
+        setTimeout(() => { if (document.body.contains(scanBox)) loadScans(); }, 2000);
+        return;
+      }
       scanBox.replaceChildren(s ? h("span", {}, statusBadge(s.status), ` last scan ${s.started_at.slice(0, 16).replace("T", " ")} · ${s.pages} page(s), ${s.chunks} chunk(s)`,
         s.details && s.details.warnings && s.details.warnings.length ? h("div", { class: "warn-text small" }, s.details.warnings.join("; ")) : "",
         s.details && s.details.report ? h("details", {}, h("summary", {}, "Pages"), h("ul", {}, s.details.report.map((p) => h("li", { class: p.ok ? "" : "fail" }, p.ok ? `${p.title || p.url} — ${p.chars} chars` : `${p.url}: ${p.error}`)))) : "")
@@ -247,10 +278,9 @@ async function tabStudio(agent) {
     h("div", { class: "row-btns" },
       h("button", { onclick: () => { ctx.web_sources.push({ url: "", max_pages: 5, same_domain_only: true }); changed(); renderWeb(); } }, "+ Web page"),
       h("button", { class: "primary", onclick: () => act(async () => {
-        if (dirty) { await save(); }
-        toast("Scanning web pages… this can take a minute");
-        const r = await api("POST", `/agents/${agent.name}/contexts/${selectedId}/scan`);
-        toast(`Scanned ${r.pages} page(s) into ${r.chunks} chunk(s)`); loadScans();
+        if (dirty) { await save(false); }
+        await api("POST", `/agents/${agent.name}/contexts/${selectedId}/scan`);
+        loadScans();
       }) }, "Scan now")),
     scanBox,
     h("h4", {}, "Facts & FAQ"), notesBox,
@@ -276,6 +306,9 @@ async function tabStudio(agent) {
   const examples = card("💬", "Examples & conversation starters", "Examples teach style. Starters appear as buttons in the chat app and seed the smoke test.",
     exBox, h("button", { onclick: () => { ctx.examples.push({ user: "", assistant: "" }); changed(); renderEx(); } }, "+ Example"),
     field("Conversation starters", chips(ctx.starters, "e.g. How much can I borrow?", changed)));
+
+  const anchors = { role: who, goal: who, audience: who, "always / never": rules, "knowledge (web or notes)": know,
+    boundaries: bounds, escalation: bounds, examples, starters: examples };
 
   // ---- save
   const draftWith = () => {
@@ -310,7 +343,12 @@ async function tabStudio(agent) {
   const promptBox = h("pre", { class: "prompt" });
   const chatLog = h("div", { class: "chat-log" });
   const chatInput = h("input", { placeholder: "Ask something as a user would…" });
-  const history = [];
+  const storeKey = `eap.preview.${agent.name}.${selectedId}`;
+  let history = [];
+  try { history = JSON.parse(sessionStorage.getItem(storeKey) || "[]"); } catch { history = []; }
+  const persist = () => { try { sessionStorage.setItem(storeKey, JSON.stringify(history.slice(-40))); } catch {} };
+  let compareId = "";
+  const compareSel = select([["", "— none —"], ...ctxs.filter((c) => c.id !== selectedId).map((c) => [c.id, c.name || c.id])], "", (v) => { compareId = v; });
   let previewTimer = null;
   function schedulePreview() { clearTimeout(previewTimer); previewTimer = setTimeout(refreshCompose, 600); }
   async function refreshCompose() {
@@ -319,29 +357,75 @@ async function tabStudio(agent) {
       promptBox.textContent = r.system_prompt;
       const c = r.completeness;
       meter.replaceChildren(h("div", { class: "meter-bar" }, h("div", { class: "meter-fill", style: `width:${c.score}%` })),
-        h("div", { class: "small" }, h("b", {}, `${c.score}% complete`), " · ", Object.entries(c.checks).map(([k, ok]) => h("span", { class: ok ? "pass" : "muted" }, (ok ? "✓ " : "○ ") + k + "  "))));
+        h("div", { class: "small" }, h("b", {}, `${c.score}% complete`), " · ",
+          Object.entries(c.checks).map(([k, ok]) => ok ? h("span", { class: "pass" }, "✓ " + k + "  ")
+            : h("button", { class: "linklike", title: "Go to this section", onclick: () => anchors[k] && anchors[k].scrollIntoView({ behavior: "smooth", block: "start" }) }, "○ " + k))),
+        (c.hints || []).length ? h("ul", { class: "hints" }, c.hints.map((x) => h("li", {}, "💡 ", x))) : "");
     } catch (e) { /* invalid in-progress edits: keep last good preview */ }
   }
   const bubble = (role, text, extra) => h("div", { class: "bubble " + role },
     role === "assistant" ? mdLite(text) : h("div", { class: "bubble-text" }, text), extra || "");
+  // "Save as test": turn an answer you like (or dislike) into a regression test, in plain words.
+  const saveAsTest = (msg, text, flags, anchor) => {
+    const judge = h("input", { type: "checkbox", checked: !flags.length });
+    const flagBox = h("input", { type: "checkbox", checked: flags.length > 0 });
+    const must = h("input", { placeholder: "comma separated, e.g. 1.75%, savings" });
+    const mustNot = h("input", { placeholder: "comma separated, e.g. guarantee, promise" });
+    const form = h("div", { class: "save-test" },
+      h("b", {}, "Save as test"), h("div", { class: "muted small" }, `When a user says “${msg.slice(0, 80)}”, the agent must…`),
+      h("label", { class: "toggle" }, judge, h("span", {}, "give an answer like this one (AI judge compares)")),
+      flags.length ? h("label", { class: "toggle" }, flagBox, h("span", {}, "be handled the same way: " + flags.map(humanFlag).join(", "))) : "",
+      field("mention", must), field("not mention", mustNot),
+      h("div", { class: "row-btns" }, h("button", { class: "small-btn", onclick: () => form.remove() }, "Cancel"),
+        h("button", { class: "small-btn primary", onclick: () => act(async () => {
+          const assertions = [];
+          if (judge.checked) assertions.push({ type: "llm_judge", threshold: 0.7, model: def.model.catalog_id,
+            rubric: `The answer gives the same key information and follows the same approach as this approved answer: "${text.slice(0, 700)}"` });
+          if (flags.length && flagBox.checked) flags.forEach((f) => assertions.push({ type: "contains", path: "flags", value: f }));
+          must.value.split(",").map((x) => x.trim()).filter(Boolean).forEach((v) => assertions.push({ type: "contains", path: "output", value: v }));
+          mustNot.value.split(",").map((x) => x.trim()).filter(Boolean).forEach((v) => assertions.push({ type: "not_contains", path: "output", value: v }));
+          const r = await api("POST", `/agents/${agent.name}/evals/cases`, { case: { context: selectedId, input: { message: msg }, assertions } });
+          form.replaceWith(h("div", { class: "pass small" }, `✓ Saved as test ${r.case_id} in “${r.suite}” (${r.cases} test(s)) — runs in Release → ① Test.`));
+        }) }, "Save test")));
+    anchor.after(form);
+  };
+
+  const answerMeta = (r, msg, text, label) => {
+    const meta = h("div", { class: "bubble-meta" },
+      label ? badge(label) : "",
+      (r.flags || []).map((f) => badge(humanFlag(f), "warn")), " ",
+      (r.sources || []).map((s, i) => h("a", { href: s.uri, target: "_blank", rel: "noopener", class: "src" }, `[${i + 1}] ${s.title || s.uri}`)),
+      (r.warnings || []).length ? h("div", { class: "muted small" }, r.warnings.join("; ")) : "",
+      timelineView(r));
+    if (!label && r.status !== "failed") meta.append(h("button", { class: "linklike small", onclick: (e) => saveAsTest(msg, text, r.flags || [], e.target.closest(".bubble")) }, "＋ Save as test"));
+    return meta;
+  };
+  const ask = async (contextId, msg, hist) => {
+    const r = await api("POST", `/agents/${agent.name}/preview`, { context: contextId, message: msg, history: hist, definition: draftWith() });
+    const text = r.status === "failed" ? `⚠ ${r.error ? r.error.message : "failed"}` : (typeof r.output === "string" ? r.output : JSON.stringify(r.output, null, 2));
+    return [r, text];
+  };
   const send = () => act(async () => {
     const msg = chatInput.value.trim(); if (!msg) return;
     chatInput.value = "";
     chatLog.append(bubble("user", msg));
     const thinking = bubble("assistant", "…"); chatLog.append(thinking); chatLog.scrollTop = chatLog.scrollHeight;
     try {
-      const r = await api("POST", `/agents/${agent.name}/preview`, { context: selectedId, message: msg, history: history.slice(-20), definition: draftWith() });
-      const text = r.status === "failed" ? `⚠ ${r.error ? r.error.message : "failed"}` : (typeof r.output === "string" ? r.output : JSON.stringify(r.output, null, 2));
-      const meta = h("div", { class: "bubble-meta" },
-        (r.flags || []).map((f) => badge(humanFlag(f), "warn")), " ",
-        (r.sources || []).map((s, i) => h("a", { href: s.uri, target: "_blank", rel: "noopener", class: "src" }, `[${i + 1}] ${s.title || s.uri}`)),
-        (r.warnings || []).length ? h("div", { class: "muted small" }, r.warnings.join("; ")) : "",
-        timelineView(r));
-      thinking.replaceWith(bubble("assistant", text, meta));
-      history.push({ role: "user", content: msg }, { role: "assistant", content: text });
+      const hist = history.slice(-20).map(({ role, content }) => ({ role, content }));
+      const cmpId = compareId;
+      const [main, other] = await Promise.all([ask(selectedId, msg, hist), cmpId ? ask(cmpId, msg, hist) : Promise.resolve(null)]);
+      const [r, text] = main;
+      thinking.replaceWith(bubble("assistant", text, answerMeta(r, msg, text, cmpId ? (ctx.name || selectedId) : "")));
+      if (other) {
+        const c2 = ctxs.find((c) => c.id === cmpId);
+        chatLog.append(h("div", { class: "bubble assistant compare" }, mdLite(other[1]), answerMeta(other[0], msg, other[1], "compare: " + (c2 ? c2.name : cmpId))));
+      }
+      history.push({ role: "user", content: msg }, { role: "assistant", content: text, flags: r.flags || [] }); persist();
     } catch (e) { thinking.replaceWith(bubble("assistant", "⚠ " + e.message)); }
     chatLog.scrollTop = chatLog.scrollHeight;
   });
+  // restore the previous preview conversation for this context
+  for (const t of history) chatLog.append(t.role === "user" ? bubble("user", t.content) : bubble("assistant", t.content, h("div", { class: "bubble-meta muted small" }, "(earlier in this session)")));
   chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
   const starterBtns = h("div", { class: "starters" });
   const renderStarters = () => starterBtns.replaceChildren(...ctx.starters.slice(0, 4).map((s) => h("button", { class: "starter", onclick: () => { chatInput.value = s; send(); } }, s)));
@@ -349,8 +433,9 @@ async function tabStudio(agent) {
   const right = h("aside", { class: "studio-preview" },
     h("div", { class: "panel" }, h("h3", {}, "Completeness"), meter),
     h("div", { class: "panel" }, h("div", { class: "row-btns", style: "justify-content:space-between" }, h("h3", { style: "margin:0" }, "Live preview"),
-        h("button", { class: "small-btn", onclick: () => { history.length = 0; chatLog.replaceChildren(); } }, "Reset")),
+        h("button", { class: "small-btn", onclick: () => { history.length = 0; persist(); chatLog.replaceChildren(); } }, "Reset")),
       h("p", { class: "muted small" }, "Talks to your draft — including unsaved edits — through the runtime. Nothing is published."),
+      ctxs.length > 1 ? h("div", { class: "row compare-row" }, field("Compare with context", compareSel)) : "",
       chatLog, starterBtns, h("div", { class: "chat-input" }, chatInput, h("button", { class: "primary", onclick: send }, "Send"))),
     h("div", { class: "panel" }, h("details", {}, h("summary", {}, h("b", {}, "What the model sees")),
       h("p", { class: "muted small" }, "System-level context (technical) + this functional context + platform rules."), promptBox)));

@@ -389,13 +389,54 @@ function sectionOutput(def) {
     field("JSON schema (for json format)", jsonArea(def.output.json_schema ?? undefined, (v) => (def.output.json_schema = v ?? null), 6)));
 }
 
+// Simple field editor for flat object schemas; anything more complex falls back to JSON.
+function schemaBuilder(schema, onChange) {
+  const TYPES = [["string", "text"], ["number", "number"], ["integer", "whole number"], ["boolean", "yes/no"], ["array", "list of text"]];
+  const simple = (sc) => !sc || ((sc.type === "object" || !sc.type) && Object.values(sc.properties || {}).every((p) =>
+    ["string", "number", "integer", "boolean"].includes(p.type) || (p.type === "array" && (!p.items || p.items.type === "string"))));
+  const box = h("div", { class: "schema-builder" });
+  let jsonMode = !simple(schema);
+  const rows = Object.entries((schema && schema.properties) || {}).map(([name, p]) => ({
+    name, type: p.type || "string", description: p.description || "", required: ((schema && schema.required) || []).includes(name) }));
+  const emit = () => {
+    const props = {}; const req = [];
+    for (const r of rows) {
+      if (!r.name.trim()) continue;
+      props[r.name.trim()] = r.type === "array" ? { type: "array", items: { type: "string" } } : { type: r.type };
+      if (r.description) props[r.name.trim()].description = r.description;
+      if (r.required) req.push(r.name.trim());
+    }
+    onChange(rows.length ? { type: "object", properties: props, required: req } : {});
+  };
+  const render = () => {
+    if (jsonMode) {
+      box.replaceChildren(jsonArea(schema, (v) => { schema = v || {}; onChange(schema); }, 8),
+        simple(schema) ? h("button", { class: "small-btn", onclick: () => { jsonMode = false; render(); } }, "Edit as fields") :
+          h("p", { class: "muted small" }, "This schema is nested, so it is edited as JSON."));
+      return;
+    }
+    box.replaceChildren(
+      h("table", { class: "sb-table" }, h("tr", {}, ["Field", "Type", "Required", "Description", ""].map((x) => h("th", {}, x))),
+        rows.map((r, i) => h("tr", {},
+          h("td", {}, (() => { const x = h("input", { value: r.name, placeholder: "field_name" }); x.oninput = () => { r.name = x.value; emit(); }; return x; })()),
+          h("td", {}, select(TYPES, r.type, (v) => { r.type = v; emit(); })),
+          h("td", {}, (() => { const x = h("input", { type: "checkbox", checked: r.required }); x.onchange = () => { r.required = x.checked; emit(); }; return x; })()),
+          h("td", {}, (() => { const x = h("input", { value: r.description }); x.oninput = () => { r.description = x.value; emit(); }; return x; })()),
+          h("td", {}, h("button", { class: "small-btn danger", onclick: () => { rows.splice(i, 1); emit(); render(); } }, "✕"))))),
+      h("div", { class: "row-btns" }, h("button", { class: "small-btn", onclick: () => { rows.push({ name: "", type: "string", description: "", required: false }); render(); } }, "+ Field"),
+        h("button", { class: "small-btn", onclick: () => { jsonMode = true; render(); } }, "Edit as JSON")));
+  };
+  render();
+  return box;
+}
+
 function sectionContract(def) {
   def.contract = def.contract || {};
-  return h("div", { class: "panel" }, h("h2", {}, "Contract ", h("span", { class: "muted" }, "(breaking changes force a major version)")),
+  return h("div", { class: "panel" }, h("h2", {}, "Interface (contract) ", h("span", { class: "muted" }, "(what callers send and get back; breaking changes force a major version)")),
     field("Description", bind(def.contract, "description", h("input", {}))),
     h("div", { class: "row" },
-      field("Input schema", jsonArea(def.contract.input_schema, (v) => (def.contract.input_schema = v || {}), 8)),
-      field("Output schema", jsonArea(def.contract.output_schema, (v) => (def.contract.output_schema = v || {}), 8))));
+      field("Input fields", schemaBuilder(def.contract.input_schema, (v) => (def.contract.input_schema = v || {}))),
+      field("Output fields", schemaBuilder(def.contract.output_schema, (v) => (def.contract.output_schema = v || {})))));
 }
 
 // ---------------------------------------------------------------------------- evals
@@ -555,101 +596,204 @@ const auditTable = (events) => h("table", {}, h("tr", {}, ["At", "Actor", "Actio
 // --------------------------------------------------------------------------- catalog
 
 async function viewCatalog() {
-  const { models } = await api("GET", "/catalog/models");
-  const { tools } = await api("GET", "/catalog/tools");
-  const { knowledge } = await api("GET", "/catalog/knowledge");
+  const [{ models }, { tools }, { knowledge }, buInfo] = await Promise.all(["models", "tools", "knowledge"].map((k) => api("GET", "/catalog/" + k)).concat([api("GET", "/bus")]));
   const editor = h("div", {});
+  const CLASSES = ["public", "internal", "confidential", "restricted"].map((x) => [x, x]);
+  const inputFor = (obj, key, attrs, cast) => { const x = h("input", Object.assign({ value: obj[key] ?? "" }, attrs || {})); x.oninput = () => { obj[key] = cast ? cast(x.value) : x.value; }; return x; };
   const edit = (kind, item) => {
-    const id = h("input", { value: item ? item.id : "" });
-    const data = Object.assign({}, item || {}); ["id", "updated_by", "updated_at"].forEach((k) => delete data[k]);
-    if (kind === "models") delete data.status;
-    let doc = data;
-    const kindSpecs = kind === "tools" ? state.plugins.tool : kind === "knowledge" ? state.plugins.knowledge : null;
-    const cfgBox = h("div", {});
-    const renderCfg = () => {
-      if (!kindSpecs) return;
-      const spec = kindSpecs.find((s) => s.type === doc.kind);
-      cfgBox.replaceChildren(spec ? h("fieldset", {}, h("legend", {}, "config (" + spec.title + ")"), schemaForm(spec.params_schema, doc.config, (v) => { doc.config = v || {}; ta.value = JSON.stringify(doc, null, 2); })) : "");
-    };
-    const ta = jsonArea(doc, (v) => { doc = v || {}; renderCfg(); }, 14);
-    renderCfg();
-    editor.replaceChildren(h("div", { class: "panel" }, h("h2", {}, (item ? "Edit " : "New ") + kind.replace(/s$/, "")),
-      field("id", id), cfgBox, field("Entry (JSON)", ta),
-      h("button", { class: "primary", onclick: () => act(async () => { await api("PUT", `/catalog/${kind}/${id.value.trim()}`, doc); toast("Saved"); route(); }) }, "Save")));
+    const doc = structuredClone(item || {}); ["updated_by", "updated_at"].forEach((k) => delete doc[k]);
+    const id = h("input", { value: doc.id || "", disabled: !!item, placeholder: "unique-id" }); delete doc.id;
+    let fields;
+    if (kind === "models") {
+      delete doc.status; doc.pricing = doc.pricing || {}; doc.params = doc.params || {};
+      fields = h("div", {},
+        h("div", { class: "row" },
+          field("Provider", select(state.plugins.model_provider.map((p) => [p.type, p.title]), doc.provider || "google_ai", (v) => { doc.provider = v; })),
+          field("Model name at the provider", inputFor(doc, "model_id", { placeholder: "e.g. gemini-2.5-flash" })),
+          field("Location", inputFor(doc, "location", { placeholder: "europe-west4, global, google-ai…" }))),
+        h("div", { class: "row" },
+          field("Input price ($ per million tokens)", inputFor(doc.pricing, "input_per_mtok", { type: "number", step: "any" }, Number)),
+          field("Output price ($ per million tokens)", inputFor(doc.pricing, "output_per_mtok", { type: "number", step: "any" }, Number))),
+        field("Notes", inputFor(doc, "notes")),
+        h("details", {}, h("summary", {}, "Advanced: provider parameters (JSON)"), jsonArea(doc.params, (v) => (doc.params = v || {}), 4)));
+      if (!item) doc.provider = doc.provider || "google_ai";
+    } else {
+      const specs = kind === "tools" ? state.plugins.tool : state.plugins.knowledge;
+      doc.kind = doc.kind || specs[0].type; doc.config = doc.config || {}; doc.status = doc.status || "active";
+      const cfgBox = h("div", {});
+      const renderCfg = () => { const sp = specs.find((x) => x.type === doc.kind); cfgBox.replaceChildren(sp ? h("fieldset", {}, h("legend", {}, sp.title + " settings"), schemaForm(sp.params_schema, doc.config, (v) => { doc.config = v || {}; })) : ""); };
+      renderCfg();
+      fields = h("div", {},
+        h("div", { class: "row" }, field("Title", inputFor(doc, "title")), field("Type", select(specs.map((x) => [x.type, x.title]), doc.kind, (v) => { doc.kind = v; doc.config = {}; renderCfg(); }))),
+        field("Description (the model reads this to decide when to use it)", inputFor(doc, "description")),
+        h("div", { class: "row" }, field("Data classification", select(CLASSES, doc.data_classification || "internal", (v) => { doc.data_classification = v; })),
+          field("Owner BU", select([["", "platform"], ...buInfo.bus.map((b) => [b, b])], doc.owner_bu || "", (v) => { doc.owner_bu = v || undefined; })),
+          field("Status", select(["active", "preview", "deprecated", "retired", "blocked"].map((x) => [x, x]), doc.status, (v) => { doc.status = v; }))),
+        cfgBox,
+        kind === "tools" ? field("Input fields the model must provide", schemaBuilder(doc.input_schema || {}, (v) => { doc.input_schema = v || {}; })) : "");
+    }
+    editor.replaceChildren(h("div", { class: "panel" }, h("h2", {}, (item ? "Edit " : "New ") + ({ models: "model", tools: "tool", knowledge: "knowledge source" })[kind]),
+      field("Id", id), fields,
+      h("div", { class: "row-btns" }, h("button", { onclick: () => editor.replaceChildren() }, "Cancel"),
+        h("button", { class: "primary", onclick: () => act(async () => {
+          if (!id.value.trim()) throw new Error("Id is required");
+          await api("PUT", `/catalog/${kind}/${id.value.trim()}`, doc); toast("Saved"); route();
+        }) }, "Save"))));
     editor.scrollIntoView({ behavior: "smooth" });
   };
-  const statusSel = (m) => {
-    const s = select(["active", "preview", "deprecated", "retired", "blocked"].map((x) => [x, x]), m.status, (v) => act(async () => {
-      if (!confirm(`Set ${m.id} to ${v}? Deprecated/retired/blocked flags every published version using it.`)) { s.value = m.status; return; }
-      const r = await api("PATCH", `/catalog/models/${m.id}/status`, { status: v, reason: "console" });
-      toast(`${m.id} → ${v}; flagged ${r.flagged_versions.length} version(s)`); route();
-    }));
-    return s;
-  };
+  const changeStatus = (m, sel) => act(async () => {
+    const v = sel.value;
+    const { live } = await api("GET", `/catalog/models/${m.id}/usage`);
+    const bad = ["deprecated", "retired", "blocked"].includes(v);
+    const close = modal(`Set ${m.id} to “${v}”?`,
+      live.length ? h("div", {}, h("p", {}, `${live.length} live agent version(s) use this model:`),
+        h("ul", {}, live.map((x) => h("li", {}, `${x.agent_name} ${x.version} (${x.alias})`))),
+        bad ? h("p", { class: "warn-text" }, v === "deprecated" ? "They keep working but are flagged for review." : "They will stop using this model and fall back to their fallback models — or fail if they have none.") : "")
+        : h("p", { class: "muted" }, "No live agent uses this model."),
+      h("div", { class: "row-btns", style: "justify-content:flex-end" },
+        h("button", { onclick: () => { sel.value = m.status; close(); } }, "Cancel"),
+        h("button", { class: bad ? "danger" : "primary", onclick: () => act(async () => {
+          const r = await api("PATCH", `/catalog/models/${m.id}/status`, { status: v, reason: "console" });
+          close(); toast(`${m.id} → ${v}; flagged ${r.flagged_versions.length} version(s)`); route();
+        }) }, `Set to ${v}`)));
+  });
+  const statusSel = (m) => { const sel = select(["active", "preview", "deprecated", "retired", "blocked"].map((x) => [x, x]), m.status, () => changeStatus(m, sel)); return sel; };
+  const testBtn = (m) => h("button", { class: "small-btn", title: "Send a tiny request through the runtime", onclick: () => act(async () => {
+    toast(`Testing ${m.id}…`);
+    const r = await api("POST", `/catalog/models/${m.id}/test`);
+    toast(r.ok ? `✓ ${m.id} answered “${String(r.reply).slice(0, 60)}” in ${r.latency_ms} ms` : `✗ ${m.id}: ${r.error ? r.error.message : "failed"}`, !r.ok);
+  }) }, "Test");
   return h("div", {}, h("h1", {}, "Catalog"),
     h("div", { class: "panel" }, h("h2", {}, "Models"),
-      h("p", { class: "muted" }, "Vertex models are seeded as preview: verify the model ID, regional availability and pricing before setting them active."),
-      h("table", {}, h("tr", {}, ["Id", "Provider / model", "Location", "Status", "Pricing $/Mtok", "Notes", ""].map((x) => h("th", {}, x))),
-        models.map((m) => h("tr", {}, h("td", {}, m.id, h("div", {}, h("button", { class: "small-btn", title: "Send a tiny request through the runtime", onclick: () => act(async () => {
-            toast(`Testing ${m.id}…`);
-            const r = await api("POST", `/catalog/models/${m.id}/test`);
-            toast(r.ok ? `✓ ${m.id} answered “${String(r.reply).slice(0, 60)}” in ${r.latency_ms} ms` : `✗ ${m.id}: ${r.error ? r.error.message : "failed"}`, !r.ok);
-          }) }, "Test"))), h("td", {}, `${m.provider} / ${m.model_id}`), h("td", {}, m.location), h("td", {}, statusSel(m)),
-          h("td", {}, `${m.pricing.input_per_mtok ?? "?"} / ${m.pricing.output_per_mtok ?? "?"}`), h("td", { class: "muted" }, m.notes),
-          h("td", {}, h("button", { onclick: () => edit("models", m) }, "Edit"))))),
+      h("p", { class: "muted" }, "Test a model before setting it active. Only active models can be used by published agents."),
+      h("table", {}, h("tr", {}, ["Model", "Provider / name", "Location", "Status", "$ in / out per M tokens", ""].map((x) => h("th", {}, x))),
+        models.map((m) => h("tr", {}, h("td", {}, h("b", {}, m.id), h("div", { class: "muted small" }, m.notes)), h("td", {}, `${m.provider} / ${m.model_id}`), h("td", {}, m.location),
+          h("td", {}, statusSel(m)), h("td", {}, `${m.pricing.input_per_mtok ?? "?"} / ${m.pricing.output_per_mtok ?? "?"}`),
+          h("td", { class: "row-btns" }, testBtn(m), h("button", { class: "small-btn", onclick: () => edit("models", m) }, "Edit"))))),
       h("button", { onclick: () => edit("models", null) }, "+ Model")),
     h("div", { class: "panel" }, h("h2", {}, "Tools"),
-      h("table", {}, h("tr", {}, ["Id", "Kind", "Classification", "Owner", "Status", ""].map((x) => h("th", {}, x))),
-        tools.map((t) => h("tr", {}, h("td", {}, t.id, h("div", { class: "muted" }, t.description)), h("td", {}, t.kind), h("td", {}, t.data_classification), h("td", {}, t.owner_bu || "platform"), h("td", {}, statusBadge(t.status)),
-          h("td", {}, h("button", { onclick: () => edit("tools", t) }, "Edit"))))),
+      h("table", {}, h("tr", {}, ["Tool", "Type", "Classification", "Owner", "Status", ""].map((x) => h("th", {}, x))),
+        tools.map((t) => h("tr", {}, h("td", {}, h("b", {}, t.id), h("div", { class: "muted small" }, t.description)), h("td", {}, t.kind), h("td", {}, t.data_classification), h("td", {}, t.owner_bu || "platform"), h("td", {}, statusBadge(t.status)),
+          h("td", {}, h("button", { class: "small-btn", onclick: () => edit("tools", t) }, "Edit"))))),
       h("button", { onclick: () => edit("tools", null) }, "+ Tool")),
     h("div", { class: "panel" }, h("h2", {}, "Knowledge sources"),
-      h("table", {}, h("tr", {}, ["Id", "Kind", "Classification", "Owner", "Status", ""].map((x) => h("th", {}, x))),
-        knowledge.map((k) => h("tr", {}, h("td", {}, k.id, h("div", { class: "muted" }, k.description)), h("td", {}, k.kind), h("td", {}, k.data_classification), h("td", {}, k.owner_bu || "platform"), h("td", {}, statusBadge(k.status)),
-          h("td", {}, h("button", { onclick: () => edit("knowledge", k) }, "Edit"))))),
+      h("table", {}, h("tr", {}, ["Source", "Type", "Classification", "Owner", "Status", ""].map((x) => h("th", {}, x))),
+        knowledge.map((k) => h("tr", {}, h("td", {}, h("b", {}, k.title || k.id), h("div", { class: "muted small" }, k.id)), h("td", {}, k.kind), h("td", {}, k.data_classification), h("td", {}, k.owner_bu || "platform"), h("td", {}, statusBadge(k.status)),
+          h("td", {}, h("button", { class: "small-btn", onclick: () => edit("knowledge", k) }, "Edit"))))),
       h("button", { onclick: () => edit("knowledge", null) }, "+ Knowledge source")),
     editor);
 }
 
 // -------------------------------------------------------------------------- policies
 
+const LIMIT_LABELS = { max_cost_usd: "Max cost per run ($)", max_input_tokens: "Max input tokens", max_output_tokens: "Max output tokens",
+  max_latency_ms: "Max response time (ms)", max_tool_calls: "Max tool calls", max_iterations: "Max reasoning steps", max_depth: "Max agent-call depth" };
+
+// Form for a platform policy or a BU overlay. For overlays, `platform` gives the ceiling and the form only allows tightening.
+function policyForm(doc, platform) {
+  const overlay = !!platform;
+  doc.limits = doc.limits || {}; doc.release = doc.release || {}; doc.soft_controls = doc.soft_controls || [];
+  doc.denied_models = doc.denied_models || []; doc.denied_tools = doc.denied_tools || [];
+  const errors = h("div", { class: "fail small" });
+  const check = () => {
+    if (!overlay) return true;
+    const errs = [];
+    for (const [k, v] of Object.entries(doc.limits)) if (platform.limits[k] != null && v > platform.limits[k]) errs.push(`${LIMIT_LABELS[k] || k}: ${v} is above the platform's ${platform.limits[k]}`);
+    if (doc.release.min_approvals != null && doc.release.min_approvals < platform.release.min_approvals) errs.push("Approvals cannot be lower than the platform's");
+    if (doc.release.min_eval_pass_rate != null && doc.release.min_eval_pass_rate < platform.release.min_eval_pass_rate) errs.push("Test pass rate cannot be lower than the platform's");
+    if (doc.daily_budget_usd != null && platform.daily_budget_usd != null && doc.daily_budget_usd > platform.daily_budget_usd) errs.push("Daily budget cannot exceed the platform's");
+    errors.replaceChildren(...errs.map((e) => h("div", {}, "✗ " + e)));
+    return !errs.length;
+  };
+  const num = (obj, key, ceiling) => {
+    const x = h("input", { type: "number", step: "any", value: obj[key] ?? "", placeholder: overlay ? `inherit (${ceiling ?? "none"})` : "" });
+    x.oninput = () => { if (x.value === "") delete obj[key]; else obj[key] = Number(x.value); check(); };
+    return x;
+  };
+  const tri = (obj, key) => select(overlay ? [["", "inherit"], ["true", "yes"], ["false", "no"]] : [["true", "yes"], ["false", "no"]],
+    obj[key] == null ? "" : String(obj[key]), (v) => { if (v === "") delete obj[key]; else obj[key] = v === "true"; check(); });
+  const form = h("div", { class: "policy-form" },
+    h("h3", {}, "Limits per run"), h("div", { class: "grid3" }, Object.keys(LIMIT_LABELS).map((k) =>
+      field(LIMIT_LABELS[k] + (overlay ? ` · platform: ${platform.limits[k] ?? "—"}` : ""), num(doc.limits, k, overlay ? platform.limits[k] : null)))),
+    h("h3", {}, "Release rules"), h("div", { class: "grid3" },
+      field("Approvals required" + (overlay ? ` · platform: ${platform.release.min_approvals}` : ""), num(doc.release, "min_approvals", overlay ? platform.release.min_approvals : null)),
+      field("Approver must not be an editor", tri(doc.release, "separation_of_duties")),
+      field("Tests must pass before release", tri(doc.release, "require_eval")),
+      field("Minimum test pass rate (0–1)" + (overlay ? ` · platform: ${platform.release.min_eval_pass_rate}` : ""), num(doc.release, "min_eval_pass_rate", overlay ? platform.release.min_eval_pass_rate : null)),
+      field("Daily budget per BU ($)" + (overlay ? ` · platform: ${platform.daily_budget_usd ?? "none"}` : ""), num(doc, "daily_budget_usd", overlay ? platform.daily_budget_usd : null))),
+    h("h3", {}, "Rules added to every agent's instructions (soft controls)"), chips(doc.soft_controls, "e.g. Never promise outcomes", () => {}),
+    h("h3", {}, "Blocked models and tools"), h("div", { class: "grid2" },
+      field("Models", chips(doc.denied_models, "catalog id", () => {})), field("Tools", chips(doc.denied_tools, "catalog id", () => {}))),
+    h("details", {}, h("summary", {}, "Advanced: required guardrails and full JSON"), pre(doc)),
+    errors);
+  form.valid = check;
+  return form;
+}
+
 async function viewPolicies() {
-  const platform = await api("GET", "/policies/platform");
-  const bu = h("input", { placeholder: "retail" });
+  const [platform, buInfo] = await Promise.all([api("GET", "/policies/platform"), api("GET", "/bus")]);
   const buBox = h("div", {});
-  let platformDoc = platform;
-  const loadBu = () => act(async () => {
-    const b = bu.value.trim(); if (!b) return;
+  const buSel = select([["", "— choose a business unit —"], ...buInfo.bus.map((b) => [b, b])], "", (b) => loadBu(b));
+  const loadBu = (b) => act(async () => {
+    if (!b) { buBox.replaceChildren(); return; }
     const [overlay, eff] = await Promise.all([api("GET", `/policies/bu/${b}`), api("GET", `/policies/effective/${b}`)]);
-    let doc = Object.keys(overlay).length ? overlay : { limits: {}, required_guardrails: [], soft_controls: [], release: {} };
-    buBox.replaceChildren(h("div", { class: "row" },
-      field(`Overlay for ${b} (may only tighten)`, jsonArea(doc, (v) => (doc = v || {}), 22)),
-      field("Effective policy", pre(eff))),
-      h("button", { class: "primary", onclick: () => act(async () => { await api("PUT", `/policies/bu/${b}`, doc); toast("Overlay saved"); loadBu(); }) }, "Save overlay"));
+    const doc = Object.keys(overlay).length ? overlay : {};
+    const f = policyForm(doc, platform);
+    buBox.replaceChildren(h("p", { class: "muted" }, `A business unit can only make the platform policy stricter. Leave a field empty to inherit.`), f,
+      h("details", {}, h("summary", {}, "Effective policy for " + b), pre(eff)),
+      h("button", { class: "primary", onclick: () => act(async () => {
+        if (!f.valid()) throw new Error("Fix the highlighted values first: a BU may only tighten the platform policy.");
+        await api("PUT", `/policies/bu/${b}`, doc); toast(`Policy for ${b} saved`); loadBu(b);
+      }) }, `Save policy for ${b}`));
   });
+  const platformDoc = structuredClone(platform);
+  const pform = policyForm(platformDoc, null);
   return h("div", {}, h("h1", {}, "Policies"),
     h("div", { class: "panel" }, h("h2", {}, "Platform baseline"),
-      h("p", { class: "muted" }, "Hard controls (limits, model/tool lists, required guardrails, release rules) are enforced in code; soft_controls are appended to every system prompt."),
-      jsonArea(platform, (v) => (platformDoc = v), 24),
-      h("button", { class: "primary", onclick: () => act(async () => { await api("PUT", "/policies/platform", platformDoc); toast("Platform policy saved"); }) }, "Save platform policy")),
-    h("div", { class: "panel" }, h("h2", {}, "Business-unit overlay"),
-      h("div", { class: "row" }, field("BU", bu), h("div", { style: "flex:0 0 auto" }, h("button", { onclick: loadBu }, "Load"))), buBox));
+      h("p", { class: "muted" }, "Applies to every agent. Limits and release rules are enforced in code; the rules below are added to every agent's instructions."),
+      pform,
+      h("button", { class: "primary", onclick: () => act(async () => { await api("PUT", "/policies/platform", platformDoc); toast("Platform policy saved"); route(); }) }, "Save platform policy")),
+    h("div", { class: "panel" }, h("h2", {}, "Business-unit policy"), field("Business unit", buSel), buBox));
 }
 
 // ----------------------------------------------------------------------------- graph
 
 async function viewGraph() {
   const g = await api("GET", "/graph");
-  const byFrom = {};
-  g.edges.forEach((e) => (byFrom[e.from] = byFrom[e.from] || []).push(e));
-  const agents = g.nodes.filter((n) => n.kind === "agent" && n.version);
-  return h("div", {}, h("h1", {}, "Dependency graph"),
-    h("p", { class: "muted" }, "Live versions (referenced by an alias or canary) and what they depend on. Model status changes flag dependent versions."),
-    h("div", { class: "panel" }, agents.length ? h("table", {}, h("tr", {}, ["Agent version", "Aliases", "Depends on"].map((x) => h("th", {}, x))),
-      agents.map((n) => h("tr", {}, h("td", {}, h("a", { href: "#/agents/" + n.name + "/versions" }, `${n.name}@${n.version}`)),
-        h("td", {}, (n.aliases || []).join(", ")),
-        h("td", {}, (byFrom[n.id] || []).map((e) => h("div", {}, badge(e.kind), " ", e.to.replace(/^\w+:/, "")))))))
-      : h("p", { class: "muted" }, "Nothing published yet.")));
+  if (!g.nodes.length) return h("div", {}, h("h1", {}, "Dependency map"), h("p", { class: "muted" }, "Nothing is live yet."));
+  // layer agents by call depth; tools/knowledge/models go to the right
+  const agents = g.nodes.filter((n) => n.kind === "agent");
+  const layer = {}; agents.forEach((n) => (layer[n.id] = 0));
+  for (let i = 0; i < agents.length; i++) for (const e of g.edges) if (e.kind === "agent" && layer[e.from] != null && layer[e.to] != null) layer[e.to] = Math.max(layer[e.to], layer[e.from] + 1);
+  const maxA = Math.max(0, ...Object.values(layer));
+  const order = ["tool", "knowledge", "model"];
+  g.nodes.filter((n) => n.kind !== "agent").forEach((n) => (layer[n.id] = maxA + 1));
+  const cols = {}; g.nodes.forEach((n) => (cols[layer[n.id]] ||= []).push(n));
+  Object.values(cols).forEach((c) => c.sort((a, b) => (order.indexOf(a.kind) - order.indexOf(b.kind)) || a.id.localeCompare(b.id)));
+  const W = 230, H = 44, GX = 90, GY = 16, pos = {};
+  const ncol = Object.keys(cols).length;
+  const height = Math.max(...Object.values(cols).map((c) => c.length)) * (H + GY) + 20;
+  Object.entries(cols).forEach(([ci, c]) => c.forEach((n, i) => (pos[n.id] = { x: 10 + ci * (W + GX), y: 10 + i * (H + GY) })));
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, text) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (text) e.textContent = text; return e; };
+  const svg = el("svg", { width: ncol * (W + GX), height, class: "graph-svg", role: "img", "aria-label": "Dependency map" });
+  for (const e of g.edges) {
+    const a = pos[e.from], b = pos[e.to]; if (!a || !b) continue;
+    const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2;
+    svg.append(el("path", { d: `M${x1},${y1} C${x1 + 45},${y1} ${x2 - 45},${y2} ${x2},${y2}`, class: "g-edge g-" + e.kind }));
+  }
+  const ICON = { agent: "🤖", tool: "🔧", knowledge: "📚", model: "🧠" };
+  for (const n of g.nodes) {
+    const p = pos[n.id]; const grp = el("g", { class: "g-node g-" + n.kind });
+    grp.append(el("rect", { x: p.x, y: p.y, width: W, height: H, rx: 8 }));
+    grp.append(el("text", { x: p.x + 10, y: p.y + 18 }, `${ICON[n.kind] || ""} ${n.name}`));
+    grp.append(el("text", { x: p.x + 10, y: p.y + 34, class: "g-sub" }, n.kind === "agent" ? `${n.version || ""}${(n.aliases || []).length ? " · " + n.aliases.join(", ") : ""}` : n.kind));
+    if (n.kind === "agent") grp.addEventListener("click", () => (location.hash = "#/agents/" + n.name + "/release"));
+    svg.append(grp);
+  }
+  return h("div", {}, h("h1", {}, "Dependency map"),
+    h("p", { class: "muted" }, "Live agent versions (left) and the agents, tools, knowledge and models they use. Click an agent to open its release page."),
+    h("div", { class: "panel graph-wrap" }, svg));
 }
 
 // ----------------------------------------------------------------------------- roles

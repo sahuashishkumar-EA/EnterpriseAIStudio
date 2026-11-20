@@ -27,14 +27,14 @@ def test_rescanning_a_draft_does_not_change_the_live_version():
     ctx = {"name": "Retail", "web_sources": [{"url": "https://bank.example/savings", "max_pages": 1}],
            "starters": ["What is the savings rate?"]}
     call(p, "PUT", "/agents/saver/draft/contexts/default", json={"context": ctx})
-    call(p, "POST", "/agents/saver/contexts/default/scan")
+    call(p, "POST", "/agents/saver/contexts/default/scan?wait=true")
     q = call(p, "POST", "/agents/saver/quick-publish", json={})
     assert q["version"] == "1.0.0" and not q.get("warnings")
     models = {m["id"] for m in call(p, "GET", "/catalog/knowledge")["knowledge"]}
     assert {"web-saver-default", "web-saver-default--v1-0-0"} <= models
 
     PAGE["text"] = "Changed page: savings now pays 9.99 percent bonus interest for everybody immediately."
-    call(p, "POST", "/agents/saver/contexts/default/scan")  # re-scan the draft only
+    call(p, "POST", "/agents/saver/contexts/default/scan?wait=true")  # re-scan the draft only
     with p.rt_client() as c:
         live = c.post("/v1/agents/saver@prod/invoke", json={"input": {"message": "savings interest rate"}},
                       headers={"X-Dev-User": "ann@example.com", "X-Dev-Roles": "retail:viewer"}).json()

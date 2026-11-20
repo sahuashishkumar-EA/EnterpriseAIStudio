@@ -767,7 +767,7 @@ def create_app(
         return _json(res)
 
     async def context_scan(request: Request, c: Caller) -> Response:
-        """Fetch the context's web pages into the agent's knowledge (runtime pgvector)."""
+        """Start a scan of the context's web pages (background job; ?wait=true runs inline)."""
         from eap_core import compose
 
         name, ctx_id = request.path_params["name"], request.path_params["ctx"]
@@ -780,6 +780,25 @@ def create_app(
             raise NotFound(str(e)) from e
         if not fctx.web_sources:
             raise Invalid("this context has no web sources; add URLs and save first")
+        sid = compose.web_source_id(name, ctx_id)
+        scan_id = new_id("scan_")
+        await db.call(lambda tx: tx.execute(
+            "INSERT INTO web_scans (id, agent_name, context_id, source_id, status, started_by, started_at) "
+            "VALUES (?, ?, ?, ?, 'running', ?, ?)", (scan_id, name, ctx_id, sid, c.id, now_iso())))
+        job = {"scan_id": scan_id, "agent": name, "context": ctx_id, "actor": c.id}
+        if request.query_params.get("wait", "false").lower() == "true":
+            res = await run_scan(job)
+            return _json(res, 200 if res["status"] == "completed" else 502)
+        await gov.tasks.enqueue("/internal/v1/tasks/scan", job, task_id=scan_id)
+        return _json({"scan_id": scan_id, "status": "running"}, 202)
+
+    async def run_scan(job: dict[str, Any]) -> dict[str, Any]:
+        from eap_core import compose
+
+        name, ctx_id, actor, scan_id = job["agent"], job["context"], job["actor"], job["scan_id"]
+        bu = await agent_bu(name)
+        defn = schema.parse_definition((await db.call(store.get_draft, name))["definition"])
+        fctx = defn.context(ctx_id)
         sid = compose.web_source_id(name, ctx_id)
         try:
             res = await gov.runtime.post("/internal/v1/knowledge/scan", {
@@ -795,19 +814,62 @@ def create_app(
                     "kind": "pgvector", "title": f"Web pages: {name} / {fctx.name}",
                     "description": ", ".join(w.url for w in fctx.web_sources)[:500],
                     "config": {"embedding_model": res.get("embedding_model", "mock-embedding"), "dimensions": 768},
-                    "data_classification": "public", "owner_bu": bu, "status": "active"}, c.id)
-            tx.execute(
-                "INSERT INTO web_scans (id, agent_name, context_id, source_id, status, pages, chunks, details, "
-                "started_by, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (new_id("scan_"), name, ctx_id, sid, status, res.get("pages", 0), res.get("chunks", 0),
-                 dumps(res), c.id, now_iso()))
-            store.audit(tx, c.id, "context.scan", f"agent/{name}",
+                    "data_classification": "public", "owner_bu": bu, "status": "active"}, actor)
+            tx.execute("UPDATE web_scans SET status = ?, pages = ?, chunks = ?, details = ? WHERE id = ?",
+                       (status, res.get("pages", 0), res.get("chunks", 0), dumps(res), scan_id))
+            store.audit(tx, actor, "context.scan", f"agent/{name}",
                         {"context": ctx_id, "status": status, "pages": res.get("pages", 0)})
 
         await db.call(save)
         if status == "completed":
             await gov.emit("catalog.updated", kind="knowledge", id=sid)
-        return _json({"status": status, **res}, 200 if status == "completed" else 502)
+        return {"scan_id": scan_id, "status": status, **res}
+
+    if isinstance(gov.tasks, LocalTaskQueue):
+        gov.tasks.register("/internal/v1/tasks/scan", run_scan)
+
+    async def task_scan(request: Request, c: Caller) -> Response:
+        return _json(await run_scan(await body(request)))
+
+    async def add_test_case(request: Request, c: Caller) -> Response:
+        """Append one case to a suite (created if missing) — used by "Save as test" in the preview."""
+        name = request.path_params["name"]
+        c.roles.require(await agent_bu(name), "functional_author")
+        b = await body(request)
+        suite_name = (b.get("suite") or "from-preview").strip()
+        case = evals.parse_dataset(dumps([b.get("case") or {}]), "json")[0]
+
+        def run(tx: Tx) -> dict[str, Any]:
+            from eap_core.db import loads
+
+            cur = tx.fetchone("SELECT id, cases FROM eval_suites WHERE agent_name = ? AND name = ?", (name, suite_name))
+            if cur:
+                cases = loads(cur["cases"], [])
+                ids = {x["id"] for x in cases}
+                if case["id"] in ids or case["id"].startswith("case-"):
+                    case["id"] = f"t{len(cases) + 1}-{new_id()[:6]}"
+                cases.append(case)
+                tx.execute("UPDATE eval_suites SET cases = ? WHERE id = ?", (dumps(cases), cur["id"]))
+                sid, n = cur["id"], len(cases)
+            else:
+                sid, n = new_id("suite_"), 1
+                tx.execute(
+                    "INSERT INTO eval_suites (id, agent_name, name, cases, assertions, required, source, created_by, "
+                    "created_at) VALUES (?, ?, ?, ?, ?, 1, 'preview', ?, ?)",
+                    (sid, name, suite_name, dumps([case]), dumps([{"type": "status", "equals": "ok"}]), c.id, now_iso()))
+            store.audit(tx, c.id, "eval.case.add", f"agent/{name}", {"suite": suite_name, "case": case["id"]})
+            return {"suite": suite_name, "suite_id": sid, "case_id": case["id"], "cases": n}
+
+        return _json(await db.call(run), 201)
+
+    async def model_usage(request: Request, c: Caller) -> Response:
+        """Live agent versions that depend on a model (shown before changing its status)."""
+        mid = request.path_params["id"]
+        rows = await db.call(lambda tx: tx.fetchall(
+            "SELECT DISTINCT a.agent_name, a.alias, a.version FROM aliases a JOIN dependencies d "
+            "ON d.agent_name = a.agent_name AND (d.version = a.version OR d.version = a.canary_version) "
+            "WHERE d.dep_kind = 'model' AND d.dep_ref = ?", (mid,)))
+        return _json({"model": mid, "live": rows})
 
     async def context_scans(request: Request, c: Caller) -> Response:
         name, ctx_id = request.path_params["name"], request.path_params["ctx"]
@@ -972,6 +1034,9 @@ def create_app(
         Route(f"{A}/agents/{{name}}/contexts/{{ctx}}/scans", api(context_scans)),
         Route(f"{A}/agents/{{name}}/quick-publish", api(quick_publish), methods=["POST"]),
         Route(f"{A}/catalog/models/{{id}}/test", api(model_test), methods=["POST"]),
+        Route(f"{A}/catalog/models/{{id}}/usage", api(model_usage)),
+        Route(f"{A}/agents/{{name}}/evals/cases", api(add_test_case), methods=["POST"]),
+        Route("/internal/v1/tasks/scan", internal(task_scan), methods=["POST"]),
         Route("/internal/v1/resolve/{name}/{alias}", internal(resolve)),
         Route("/internal/v1/agents", internal(internal_agents)),
         Route("/internal/v1/tasks/eval-run", internal(task_eval_run), methods=["POST"]),

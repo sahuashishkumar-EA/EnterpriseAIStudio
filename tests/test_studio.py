@@ -102,7 +102,7 @@ def test_two_personas_and_functional_contexts(plat):
     assert "product specialist" in broker["system_prompt"] and "friendly mortgage" not in broker["system_prompt"]
 
     # scan the context's web pages (same domain only, script/nav stripped)
-    scan = call(plat, "POST", "/agents/mortgage-helper/contexts/retail/scan", FUNC)
+    scan = call(plat, "POST", "/agents/mortgage-helper/contexts/retail/scan?wait=true", FUNC)
     assert scan["pages"] == 2 and scan["chunks"] >= 2
     assert all("other.example" not in p["url"] for p in scan["report"])
     scans = call(plat, "GET", "/agents/mortgage-helper/contexts/retail/scans", FUNC)["scans"]

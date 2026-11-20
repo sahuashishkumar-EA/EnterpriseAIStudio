@@ -170,4 +170,23 @@ def completeness(ctx: FunctionalContext) -> dict[str, Any]:
         "examples": bool(ctx.examples),
         "starters": bool(ctx.starters),
     }
-    return {"score": round(100 * sum(checks.values()) / len(checks)), "checks": checks}
+    from .schema import FunctionalGuardrails
+
+    defaults = FunctionalGuardrails()
+    g = ctx.guardrails
+    hints: list[str] = []
+    if g.blocked_topics and g.refusal_message == defaults.refusal_message:
+        hints.append("The refusal reply is the generic default — say what the agent CAN help with instead.")
+    if g.escalation.triggers and g.escalation.message == defaults.escalation.message:
+        hints.append("The hand-over reply is generic — tell people how and when they will be contacted.")
+    if ctx.role and len(ctx.role.split()) < 4:
+        hints.append("The role is very short — add who the agent works for and its expertise.")
+    if not ctx.examples and ctx.behavior.tone in ("formal", "playful", "empathetic"):
+        hints.append(f"A {ctx.behavior.tone} tone is easier to get right with one or two example answers.")
+    if ctx.web_sources and not ctx.notes:
+        hints.append("Consider a few facts in Facts & FAQ for questions the web pages don't answer well.")
+    if len(ctx.starters) == 1:
+        hints.append("Add a second or third starter — starters also become the automatic smoke tests.")
+    if g.personal_data == "allow" and ctx.audience and "customer" in ctx.audience.lower():
+        hints.append("Personal data is allowed for a customer-facing audience — consider 'Redact it'.")
+    return {"score": round(100 * sum(checks.values()) / len(checks)), "checks": checks, "hints": hints}
