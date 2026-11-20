@@ -142,6 +142,23 @@ def create_app(
                       for s in (d.get("trace") or {}).get("steps", [])],
         })
 
+    async def feedback(request: Request) -> Response:
+        try:
+            user = await user_of(request)
+        except AuthError as e:
+            return err(401, str(e))
+        b = await request.json()
+        run_id = str(b.get("run_id") or "")
+        if not run_id or b.get("rating") not in ("up", "down"):
+            return err(400, "run_id and rating (up|down) are required")
+        headers = {**await upstream_headers(settings.runtime_url), "X-EAP-On-Behalf-Of": user}
+        r = await rt.post(f"/v1/runs/{run_id}/feedback", json={"rating": b["rating"],
+                                                                "comment": str(b.get("comment") or "")[:2000]},
+                          headers=headers)
+        if r.status_code >= 400:
+            return err(r.status_code, r.text[:200])
+        return JSONResponse({"ok": True})
+
     async def index(request: Request) -> Response:
         return FileResponse(HERE / "static" / "index.html")
 
@@ -154,6 +171,7 @@ def create_app(
         Route("/api/me", me),
         Route("/api/agents", agents),
         Route("/api/chat", chat, methods=["POST"]),
+        Route("/api/feedback", feedback, methods=["POST"]),
         Mount("/static", StaticFiles(directory=HERE / "static"), name="static"),
     ])
 

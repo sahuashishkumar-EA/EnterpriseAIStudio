@@ -54,3 +54,8 @@ button { font: inherit; cursor: pointer; }
 .how summary { cursor: pointer; }
 .how ol { list-style: none; margin: 6px 0 0; padding: 0 0 0 8px; border-left: 2px solid var(--line); }
 .how li { padding: 2px 0; word-break: break-word; }
+.rate { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.rate .thumb { border: 1px solid var(--line); background: transparent; border-radius: 8px; padding: 1px 8px; font-size: 13px; opacity: .7; }
+.rate .thumb:hover { opacity: 1; border-color: var(--accent); }
+.rate input { flex: 1; min-width: 160px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font: inherit; font-size: 13px; background: var(--panel); color: var(--ink); }
+.rate .ghost { padding: 3px 10px; font-size: 13px; }

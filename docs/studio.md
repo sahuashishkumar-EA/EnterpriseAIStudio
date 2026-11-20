@@ -115,3 +115,25 @@ or `global`, after you've accepted the data-residency implications) and test aga
 | `author` | the above + technical setup, eval suites, evals |
 | `approver` / `publisher` | approve / publish, move aliases |
 | `bu_admin`, `platform_admin` | everything (platform admin: catalog, platform policy) |
+
+## Monitor (after go-live)
+
+Console → **Monitor** shows only live traffic (preview and test runs are excluded unless you tick
+"include previews & tests"). The runtime records the context, behaviour flags, end-user feedback and
+review state on each run (`runs` migration `004_ops.sql`). The governor reads them through
+`/internal/v1/ops/*` and limits results to the business units you can see.
+
+- **Inbox**: hand-overs (escalation guardrail) and answers rated 👎 in the chat app. Assign to yourself,
+  resolve with a note (audited as `run.review`), or **Turn into a test**. That saves a case to the
+  agent's `from-monitor` suite, which runs in Release → ① Test before the next go-live.
+  Reviewing needs `functional_author` on the agent's BU; `viewer` can read.
+- **Conversations**: every turn, filterable by agent, outcome, handling, feedback and text, with the
+  orchestration timeline and any sub-agent runs of the same trace.
+- **Dashboard**: per agent, turns per day, answered/failed, hand-overs, refusals, helpfulness, response
+  time (median and slowest 5%) and spend.
+
+The chat app's 👍/👎 calls `POST /v1/runs/{id}/feedback` on the runtime on the user's behalf. Only the
+user who asked (or a trusted service) can rate a run.
+
+Errors in the console are shown in plain language with what to do about them; the raw message is
+under "Technical details".

@@ -862,6 +862,58 @@ def create_app(
 
         return _json(await db.call(run), 201)
 
+    # ------------------------------------------------------------------ monitor (runtime ops proxy)
+
+    def ops_scope(c: Caller, request: Request) -> dict[str, Any]:
+        """Limit runtime queries to the BUs the caller can see (None = all)."""
+        vis = c.roles.visible_bus()
+        want = [b for b in (request.query_params.get("bu") or "").split(",") if b]
+        if vis is None:
+            return {"bus": ",".join(want) if want else None}
+        bus = [b for b in (want or sorted(vis)) if b in vis]
+        return {"bus": ",".join(bus) if bus else "__none__"}
+
+    async def ops_runs(request: Request, c: Caller) -> Response:
+        qp = request.query_params
+        params = {k: qp.get(k) for k in ("agent", "status", "flag", "review", "feedback", "q", "since", "limit",
+                                          "offset", "include_tests")}
+        try:
+            return _json(await gov.runtime.get("/internal/v1/ops/runs", {**params, **ops_scope(c, request)}))
+        except RuntimeError as e:
+            return _error(502, "runtime_unavailable", f"Could not reach the agent runtime: {e}")
+
+    async def ops_run_get(rid: str, c: Caller) -> dict[str, Any]:
+        try:
+            run = await gov.runtime.get(f"/internal/v1/ops/runs/{rid}")
+        except LookupError as e:
+            raise NotFound("run not found") from e
+        c.roles.require(run.get("bu") or "*", "viewer")
+        return run
+
+    async def ops_run(request: Request, c: Caller) -> Response:
+        run = await ops_run_get(request.path_params["id"], c)
+        run["can_review"] = c.roles.has(run.get("bu") or "*", "functional_author")
+        return _json(run)
+
+    async def ops_review(request: Request, c: Caller) -> Response:
+        rid = request.path_params["id"]
+        run = await ops_run_get(rid, c)
+        c.roles.require(run.get("bu") or "*", "functional_author")
+        b = await body(request)
+        payload = {k: b[k] for k in ("status", "assignee", "note") if k in b}
+        if payload.get("assignee") == "me":
+            payload["assignee"] = c.id
+        res = await gov.runtime.post(f"/internal/v1/ops/runs/{rid}/review", {**payload, "actor": c.id})
+        await db.call(lambda tx: store.audit(tx, c.id, "run.review", f"agent/{run['agent']}", {"run": rid, **payload}))
+        return _json(res)
+
+    async def ops_stats(request: Request, c: Caller) -> Response:
+        params = {"agent": request.query_params.get("agent"), "days": request.query_params.get("days")}
+        try:
+            return _json(await gov.runtime.get("/internal/v1/ops/stats", {**params, **ops_scope(c, request)}))
+        except RuntimeError as e:
+            return _error(502, "runtime_unavailable", f"Could not reach the agent runtime: {e}")
+
     async def model_usage(request: Request, c: Caller) -> Response:
         """Live agent versions that depend on a model (shown before changing its status)."""
         mid = request.path_params["id"]
@@ -1035,6 +1087,10 @@ def create_app(
         Route(f"{A}/agents/{{name}}/quick-publish", api(quick_publish), methods=["POST"]),
         Route(f"{A}/catalog/models/{{id}}/test", api(model_test), methods=["POST"]),
         Route(f"{A}/catalog/models/{{id}}/usage", api(model_usage)),
+        Route(f"{A}/ops/runs", api(ops_runs)),
+        Route(f"{A}/ops/runs/{{id}}", api(ops_run)),
+        Route(f"{A}/ops/runs/{{id}}/review", api(ops_review), methods=["POST"]),
+        Route(f"{A}/ops/stats", api(ops_stats)),
         Route(f"{A}/agents/{{name}}/evals/cases", api(add_test_case), methods=["POST"]),
         Route("/internal/v1/tasks/scan", internal(task_scan), methods=["POST"]),
         Route("/internal/v1/resolve/{name}/{alias}", internal(resolve)),

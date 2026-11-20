@@ -24,7 +24,7 @@ async function api(method, path, body) {
   const data = text ? JSON.parse(text) : {};
   if (!res.ok) {
     const err = new Error((data.error && data.error.message) || res.statusText);
-    err.details = data.error && data.error.details; err.status = res.status;
+    err.details = data.error && data.error.details; err.status = res.status; err.code = data.error && data.error.code;
     throw err;
   }
   return data;
@@ -32,14 +32,14 @@ async function api(method, path, body) {
 
 function toast(msg, bad) {
   const t = document.getElementById("toast");
-  t.textContent = msg; t.className = "toast" + (bad ? " bad" : ""); t.hidden = false;
-  clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), bad ? 9000 : 3500);
+  if (msg instanceof Node) t.replaceChildren(msg); else t.textContent = msg;
+  t.className = "toast" + (bad ? " bad" : ""); t.hidden = false;
+  const hide = () => { clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), bad ? 10000 : 3500); };
+  t.onmouseenter = () => clearTimeout(toast._t); t.onmouseleave = hide; t.onclick = (e) => { if (e.target === t) t.hidden = true; };
+  hide();
 }
-function fail(e) {
-  let msg = e.message;
-  if (e.details) msg += "\n" + (typeof e.details === "string" ? e.details : JSON.stringify(e.details, null, 2)).slice(0, 1500);
-  toast(msg, true);
-}
+// Errors in plain language with what to do about them (monitor.js), technical details folded away.
+function fail(e) { toast(typeof errorView === "function" ? errorView(e) : e.message, true); }
 async function act(fn) { try { return await fn(); } catch (e) { fail(e); } }
 
 function renderIdentity() {
@@ -85,6 +85,7 @@ const routes = [
   [/^#\/catalog$/, viewCatalog],
   [/^#\/policies$/, viewPolicies],
   [/^#\/graph$/, viewGraph],
+  [/^#\/monitor(?:\?.*)?$/, () => viewMonitor()],
   [/^#\/roles$/, viewRoles],
   [/^#\/audit$/, viewAudit],
 ];
@@ -113,7 +114,7 @@ async function route() {
   const hash = location.hash || "#/agents";
   for (const [re, fn] of routes) {
     const m = hash.match(re);
-    if (m) { view.replaceChildren(h("p", { class: "muted" }, "Loading…")); try { view.replaceChildren(await fn(m)); } catch (e) { fail(e); view.replaceChildren(h("p", { class: "fail" }, e.message)); } return; }
+    if (m) { view.replaceChildren(h("p", { class: "muted" }, "Loading…")); try { view.replaceChildren(await fn(m)); } catch (e) { view.replaceChildren(errorView(e)); } return; }
   }
   location.hash = "#/agents";
 }

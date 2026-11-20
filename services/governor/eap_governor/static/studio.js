@@ -402,7 +402,7 @@ async function tabStudio(agent) {
   };
   const ask = async (contextId, msg, hist) => {
     const r = await api("POST", `/agents/${agent.name}/preview`, { context: contextId, message: msg, history: hist, definition: draftWith() });
-    const text = r.status === "failed" ? `⚠ ${r.error ? r.error.message : "failed"}` : (typeof r.output === "string" ? r.output : JSON.stringify(r.output, null, 2));
+    const text = r.status === "failed" ? `⚠ ${r.error ? explainError(r.error).title + (explainError(r.error).fix ? " " + explainError(r.error).fix : "") : "failed"}` : (typeof r.output === "string" ? r.output : JSON.stringify(r.output, null, 2));
     return [r, text];
   };
   const send = () => act(async () => {

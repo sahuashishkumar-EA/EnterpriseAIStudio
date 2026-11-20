@@ -28,6 +28,15 @@ class RuntimeClient:
             raise RuntimeError(f"runtime {path} failed: {r.status_code} {r.text[:500]}")
         return r.json()
 
+    async def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        r = await self._client.get(path, params={k: v for k, v in (params or {}).items() if v is not None},
+                                   headers=await self._headers())
+        if r.status_code == 404:
+            raise LookupError(path)
+        if r.status_code >= 400:
+            raise RuntimeError(f"runtime {path} failed: {r.status_code} {r.text[:500]}")
+        return r.json()
+
     async def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self.post("/internal/v1/execute", payload)
 

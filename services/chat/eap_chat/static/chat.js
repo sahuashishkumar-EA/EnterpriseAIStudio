@@ -82,6 +82,24 @@ function select(agent, contextId) {
   renderAgents(); $("side").classList.remove("open"); $("input").focus();
 }
 
+function rate(runId) {
+  const box = el("div", { class: "rate" });
+  const done = (txt) => box.replaceChildren(el("span", { class: "small muted" }, txt));
+  const post = async (rating, comment) => {
+    try { await api("POST", "/api/feedback", { run_id: runId, rating, comment }); done(rating === "up" ? "Thanks for the feedback 👍" : "Thanks — a colleague will review this answer."); }
+    catch (e) { done("⚠ " + e.message); }
+  };
+  const down = () => {
+    const input = el("input", { placeholder: "What was wrong? (optional)", maxlength: "500" });
+    box.replaceChildren(input, el("button", { class: "ghost", onclick: () => post("down", input.value) }, "Send"),
+      el("button", { class: "ghost", onclick: () => post("down", "") }, "Skip"));
+    input.focus();
+  };
+  box.append(el("button", { class: "thumb", title: "Helpful", onclick: () => post("up", "") }, "👍"),
+    el("button", { class: "thumb", title: "Not helpful", onclick: down }, "👎"));
+  return box;
+}
+
 async function send(text) {
   const msg = (text || $("input").value).trim();
   if (!msg || !state.agent) return;
@@ -100,7 +118,7 @@ async function send(text) {
     const bubble = el("div", { class: "msg bot" }, md(text),
       el("div", { class: "meta" },
         ...r.sources.map((s, i) => el("a", { href: s.uri, target: "_blank", rel: "noopener" }, `[${i + 1}] ${s.title || s.uri}`)),
-        el("span", {}, `v${r.version} · ${r.latency_ms} ms`)), timeline(r));
+        el("span", {}, `v${r.version} · ${r.latency_ms} ms`)), timeline(r), r.run_id ? rate(r.run_id) : "");
     typing.replaceWith(bubble);
     if (r.flags.includes("escalated")) log.append(el("div", { class: "msg notice" }, "🙋 This conversation was flagged for a human colleague."));
     state.history.push({ role: "user", content: msg }, { role: "assistant", content: text });

@@ -34,7 +34,7 @@ from eap_core.auth import Authenticator, AuthError, Principal
 from eap_core.context import HEADER as CTX_HEADER
 from eap_core.context import CallContext, CallContextError
 from eap_core.contracts import InvokeRequest, InvokeResponse, ResumeRequest
-from eap_core.db import Database, expand_url
+from eap_core.db import Database, dumps, expand_url
 from eap_core.events import parse_push
 from eap_core.tasks import LocalTaskQueue, TaskQueue, queue_from_env
 
@@ -292,6 +292,135 @@ def create_app(
                                        depth=row["depth"], state=ex.state, exists=True)
         return JSONResponse(resp.model_dump(mode="json"))
 
+    async def feedback(request: Request) -> Response:
+        """End-user 👍/👎 on an answer (the chat app sends it on the user's behalf)."""
+        p = await caller(request)
+        row = await svc.runs.get(request.path_params["run_id"])
+        if row is None or not can_see(p, row):
+            return _error(404, "not_found", "run not found")
+        b = await request.json()
+        rating = b.get("rating")
+        if rating not in ("up", "down"):
+            return _error(400, "invalid", "rating must be 'up' or 'down'")
+        await svc.runs.feedback(row["id"], rating, str(b.get("comment") or ""), p.id)
+        return JSONResponse({"ok": True, "run_id": row["id"], "rating": rating})
+
+    # ------------------------------------------------------- ops (governor only)
+
+    def ops_view(row: dict[str, Any], full: bool = False) -> dict[str, Any]:
+        out = run_view(row) if full else {k: row.get(k) for k in (
+            "id", "agent", "alias", "version", "mode", "status", "trace_id", "parent_run_id", "on_behalf_of",
+            "depth", "cost_usd", "latency_ms", "created_at")}
+        text = row.get("input")
+        if isinstance(text, dict):
+            text = text.get("message") or text.get("question") or text.get("query") or dumps(text)
+        out.update({
+            "run_id": row["id"], "bu": row.get("bu"), "principal": row.get("principal"),
+            "context_id": row.get("context_id"), "flags": row.get("flags") or [], "feedback": row.get("feedback"),
+            "review_status": row.get("review_status"), "assignee": row.get("assignee"),
+            "review_note": row.get("review_note"), "reviewed_by": row.get("reviewed_by"),
+            "reviewed_at": row.get("reviewed_at"), "input_text": str(text or "")[:300],
+            "error_code": (row.get("error") or {}).get("code") if isinstance(row.get("error"), dict) else None,
+        })
+        if full:
+            out["input"] = row.get("input")
+        else:
+            o = row.get("output")
+            out["output_text"] = (o if isinstance(o, str) else dumps(o) if o is not None else "")[:300]
+        return out
+
+    def csv_param(request: Request, name: str) -> list[str] | None:
+        v = request.query_params.get(name)
+        return None if v is None else [x for x in v.split(",") if x]
+
+    async def ops_runs(request: Request) -> Response:
+        p = await principal(request)
+        require_service(p, settings.execute_callers)
+        qp = request.query_params
+        rows = await svc.runs.search(
+            agents=csv_param(request, "agent"), bus=csv_param(request, "bus"), status=qp.get("status"),
+            flag=qp.get("flag"), review=qp.get("review"), feedback=qp.get("feedback"), q=qp.get("q"),
+            since=qp.get("since"), include_tests=qp.get("include_tests") == "true",
+            limit=int(qp.get("limit", 50)), offset=int(qp.get("offset", 0)))
+        return JSONResponse({"runs": [ops_view(r) for r in rows]})
+
+    async def ops_run(request: Request) -> Response:
+        p = await principal(request)
+        require_service(p, settings.execute_callers)
+        row = await svc.runs.get(request.path_params["run_id"])
+        if row is None:
+            return _error(404, "not_found", "run not found")
+        out = ops_view(row, full=True)
+        rows = await svc.runs.search(q=row["trace_id"], include_tests=True, limit=50)
+        out["related"] = [ops_view(r) for r in rows if r["id"] != row["id"]]
+        return JSONResponse(out)
+
+    async def ops_review(request: Request) -> Response:
+        p = await principal(request)
+        require_service(p, settings.execute_callers)
+        b = await request.json()
+        if b.get("status") not in (None, "open", "resolved"):
+            return _error(400, "invalid", "status must be open or resolved")
+        if await svc.runs.get(request.path_params["run_id"]) is None:
+            return _error(404, "not_found", "run not found")
+        await svc.runs.review(request.path_params["run_id"], status=b.get("status"), assignee=b.get("assignee"),
+                              note=b.get("note"), by=str(b.get("actor") or p.id))
+        return JSONResponse(ops_view(await svc.runs.get(request.path_params["run_id"]), full=True))  # type: ignore[arg-type]
+
+    async def ops_stats(request: Request) -> Response:
+        """Per-agent volume, outcomes, cost, latency and feedback over the last N days (live traffic only)."""
+        from datetime import datetime, timedelta, timezone
+
+        p = await principal(request)
+        require_service(p, settings.execute_callers)
+        days = max(1, min(int(request.query_params.get("days", 14)), 90))
+        since = (datetime.now(timezone.utc) - timedelta(days=days - 1)).strftime("%Y-%m-%dT00:00:00")
+        rows = await svc.runs.search(agents=csv_param(request, "agent"), bus=csv_param(request, "bus"),
+                                     since=since, limit=500, offset=0)
+        more = rows
+        while len(more) == 500 and len(rows) < 20000:
+            more = await svc.runs.search(agents=csv_param(request, "agent"), bus=csv_param(request, "bus"),
+                                         since=since, limit=500, offset=len(rows))
+            rows += more
+        day_keys = [(datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days - 1, -1, -1)]
+        agents: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            if r["mode"] == "child":
+                continue
+            a = agents.setdefault(r["agent"], {"agent": r["agent"], "bu": r.get("bu"), "runs": 0, "ok": 0, "failed": 0,
+                                               "partial": 0, "needs_input": 0, "escalated": 0, "refused": 0,
+                                               "cost_usd": 0.0, "lat": [], "up": 0, "down": 0, "open": 0,
+                                               "contexts": {}, "days": {d: {"runs": 0, "failed": 0, "cost_usd": 0.0}
+                                                                        for d in day_keys}})
+            a["runs"] += 1
+            a[r["status"]] = a.get(r["status"], 0) + (1 if r["status"] in ("ok", "failed", "partial", "needs_input") else 0)
+            flags = r.get("flags") or []
+            a["escalated"] += "escalated" in flags
+            a["refused"] += any(f.startswith("responded:") for f in flags)
+            a["cost_usd"] += r["cost_usd"] or 0
+            a["lat"].append(r["latency_ms"] or 0)
+            fb = r.get("feedback") or {}
+            a["up"] += fb.get("rating") == "up"
+            a["down"] += fb.get("rating") == "down"
+            a["open"] += r.get("review_status") == "open"
+            if r.get("context_id"):
+                a["contexts"][r["context_id"]] = a["contexts"].get(r["context_id"], 0) + 1
+            d = a["days"].get(r["created_at"][:10])
+            if d:
+                d["runs"] += 1
+                d["failed"] += r["status"] == "failed"
+                d["cost_usd"] += r["cost_usd"] or 0
+        out = []
+        for a in agents.values():
+            lat = sorted(a.pop("lat"))
+            pct = (lambda q: lat[min(len(lat) - 1, int(q * len(lat)))] if lat else 0)
+            a.update(p50_ms=pct(0.5), p95_ms=pct(0.95), cost_usd=round(a["cost_usd"], 6),
+                     days=[{"day": k, **{kk: (round(vv, 6) if isinstance(vv, float) else vv) for kk, vv in v.items()}}
+                           for k, v in a["days"].items()])
+            out.append(a)
+        out.sort(key=lambda x: -x["runs"])
+        return JSONResponse({"days": days, "since": since, "agents": out})
+
     # -------------------------------------------------------------------- internal
 
     async def task_run(request: Request) -> Response:
@@ -447,6 +576,11 @@ def create_app(
         Route("/v1/agents/{ref}/invoke", wrap(invoke), methods=["POST"]),
         Route("/v1/runs/{run_id}", wrap(get_run)),
         Route("/v1/runs/{run_id}/resume", wrap(resume), methods=["POST"]),
+        Route("/v1/runs/{run_id}/feedback", wrap(feedback), methods=["POST"]),
+        Route("/internal/v1/ops/runs", wrap(ops_runs)),
+        Route("/internal/v1/ops/runs/{run_id}", wrap(ops_run)),
+        Route("/internal/v1/ops/runs/{run_id}/review", wrap(ops_review), methods=["POST"]),
+        Route("/internal/v1/ops/stats", wrap(ops_stats)),
         Route("/v1/knowledge/{source}/documents", wrap(ingest), methods=["POST"]),
         Route("/v1/knowledge/{source}/search", wrap(search), methods=["POST"]),
         Route("/mcp", wrap(mcp_endpoint), methods=["GET", "POST"]),
