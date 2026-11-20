@@ -1,6 +1,7 @@
 """Per-BU role-based access control for the Governor.
 
 Roles (granted per BU, or platform-wide with bu='*'):
+  member          end user of the BU's agents in the chat app (no console rights)
   viewer          read agents, versions, evals, audit
   functional_author  edit functional contexts (role, behaviour, knowledge, boundaries), preview
   author          technical setup + everything functional_author can do; eval suites, run evals
@@ -18,14 +19,15 @@ from __future__ import annotations
 from eap_core.auth import Principal
 from eap_core.db import Tx, now_iso
 
-ROLES = ("viewer", "functional_author", "author", "approver", "publisher", "bu_admin", "platform_admin")
+ROLES = ("member", "viewer", "functional_author", "author", "approver", "publisher", "bu_admin", "platform_admin")
 IMPLIES: dict[str, set[str]] = {
-    "viewer": {"viewer"},
-    "functional_author": {"functional_author", "viewer"},
-    "author": {"author", "functional_author", "viewer"},
-    "approver": {"approver", "viewer"},
-    "publisher": {"publisher", "viewer"},
-    "bu_admin": {"bu_admin", "author", "functional_author", "approver", "publisher", "viewer"},
+    "member": {"member"},  # end user of the BU's agents (chat app); no console rights
+    "viewer": {"viewer", "member"},
+    "functional_author": {"functional_author", "viewer", "member"},
+    "author": {"author", "functional_author", "viewer", "member"},
+    "approver": {"approver", "viewer", "member"},
+    "publisher": {"publisher", "viewer", "member"},
+    "bu_admin": {"bu_admin", "author", "functional_author", "approver", "publisher", "viewer", "member"},
     "platform_admin": set(ROLES),
 }
 
@@ -56,16 +58,22 @@ class RoleSet:
         return "platform_admin" in self.grants.get("*", set())
 
     def visible_bus(self) -> set[str] | None:
-        """None = all BUs."""
-        if "*" in self.grants:
+        """BUs whose agents the caller may see in the console. None = all BUs."""
+        if "*" in self.grants and self.grants["*"] - {"member"}:
             return None
-        return set(self.grants)
+        return {bu for bu, rs in self.grants.items() if bu != "*" and rs - {"member"}}
+
+    def member_bus(self) -> set[str]:
+        return {bu for bu in self.grants if bu != "*"}
 
     def to_dict(self) -> dict[str, list[str]]:
         return {bu: sorted(rs) for bu, rs in self.grants.items()}
 
 
 def load_roles(tx: Tx, principal: Principal) -> RoleSet:
+    u = tx.fetchone("SELECT status FROM users WHERE email = ?", (principal.id,))
+    if u is not None and u["status"] == "disabled":
+        return RoleSet(principal, {})  # disabled in the directory: no access anywhere
     grants: dict[str, set[str]] = {}
     for bu, roles in principal.bu_roles().items():
         grants.setdefault(bu, set()).update(r for r in roles if r in ROLES)

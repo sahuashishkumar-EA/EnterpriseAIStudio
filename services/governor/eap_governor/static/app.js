@@ -86,7 +86,8 @@ const routes = [
   [/^#\/policies$/, viewPolicies],
   [/^#\/graph$/, viewGraph],
   [/^#\/monitor(?:\?.*)?$/, () => viewMonitor()],
-  [/^#\/roles$/, viewRoles],
+  [/^#\/roles$/, () => { location.hash = "#/people"; return h("div"); }],
+  [/^#\/people(?:\?.*)?$/, () => viewPeople()],
   [/^#\/audit$/, viewAudit],
 ];
 
@@ -148,7 +149,9 @@ async function viewAgents() {
     h("div", { class: "ac-badges" },
       a.live_version ? badge("live " + a.live_version, "ok") : badge("not live"),
       a.has_changes && a.live_version ? badge("unpublished changes", "warn") : "",
-      a.chat_live ? badge("in chat app", "ok") : ""),
+      a.chat_live ? badge("in chat app", "ok") : "",
+      a.extends ? badge(`🏢 ${a.owner_bu} variant of ${a.extends.agent}`) : "",
+      a.customizable ? badge("BUs can customize") : ""),
     h("div", { class: "muted small" }, a.contexts.length ? `${a.contexts.length} context(s): ${a.contexts.slice(0, 3).join(", ")}` : "no contexts",
       " · ", a.model || "no model"));
   const render = () => {
@@ -186,9 +189,10 @@ async function viewAgents() {
       })()));
 }
 
-function agentTabs() {
+function agentTabs(agent) {
   const tabs = [["overview", "Overview"], ["studio", "🧑‍💼 Functional studio"]];
-  if (persona() === "technical") tabs.push(["technical", "🛠️ Technical setup"]);
+  if (agent && agent.variant_of) tabs.push(["bu", "🏢 BU settings"]);
+  else if (persona() === "technical") tabs.push(["technical", "🛠️ Technical setup"]);
   tabs.push(["release", "🚀 Release"], ["audit", "History"]);
   return tabs;
 }
@@ -197,14 +201,17 @@ async function viewAgent(name, tab) {
   const agent = await api("GET", "/agents/" + encodeURIComponent(name));
   window.onbeforeunload = null;
   if (["evals", "versions"].includes(tab)) tab = "release"; // old links
+  if (agent.variant_of && ["technical", "definition"].includes(tab)) tab = "bu";
   const body = await ({ overview: tabOverview, studio: tabStudio, technical: tabDefinition, definition: tabDefinition,
-    release: tabReleaseFlow, audit: tabAgentAudit }[tab] || tabOverview)(agent);
-  const tabs = agentTabs();
+    bu: tabBuSettings, release: tabReleaseFlow, audit: tabAgentAudit }[tab] || tabOverview)(agent);
+  const tabs = agentTabs(agent);
   if (tab === "technical" && !tabs.some(([k]) => k === "technical")) tabs.splice(2, 0, ["technical", "🛠️ Technical setup"]);
   return h("div", {},
     h("div", { class: "crumbs" }, h("a", { href: "#/agents" }, "Agents"), " / ", agent.owner_bu),
     h("h1", {}, agent.name, agent.aliases.some((a) => a.alias === "prod") ? h("span", { class: "badge ok", style: "margin-left:10px" }, "live") : h("span", { class: "badge", style: "margin-left:10px" }, "not live"),
-      hostingBadge(agent.draft.definition)),
+      hostingBadge(agent.draft.definition),
+      agent.variant_of ? h("span", { class: "badge", style: "margin-left:8px" }, `variant of ${agent.variant_of}`) : ""),
+    variantBanner(agent),
     h("div", { class: "tabs" }, tabs.map(([k, label]) => h("a", { href: `#/agents/${name}/${k}`, class: k === tab ? "active" : "" }, label))),
     body);
 }
@@ -228,7 +235,7 @@ function tabDefinition(agent) {
     ta.addEventListener("change", () => { try { Object.keys(def).forEach((k) => delete def[k]); Object.assign(def, JSON.parse(ta.value)); ta.style.borderColor = ""; } catch { ta.style.borderColor = "var(--bad)"; } });
     return h("div", { class: "panel" }, ta);
   };
-  const formEditor = () => h("div", {}, sectionBasics(def), sectionHosting(def), sectionPrompt(def), sectionModel(def), sectionPattern(def),
+  const formEditor = () => h("div", {}, sectionBasics(def), sectionHosting(def), sectionCustomization(def), sectionPrompt(def), sectionModel(def), sectionPattern(def),
     sectionBindings(def), sectionGuardrails(def), sectionLimits(def), sectionOutput(def), sectionContract(def));
 
   const save = () => act(async () => {
@@ -853,8 +860,8 @@ async function viewGraph() {
 async function viewRoles() {
   const { bindings } = await api("GET", "/role-bindings");
   const p = h("input", { placeholder: "user@example.com" }), bu = h("input", { placeholder: "retail or *" });
-  const role = select(["viewer", "functional_author", "author", "approver", "publisher", "bu_admin", "platform_admin"].map((r) => [r, r]), "viewer", () => {});
-  return h("div", {}, h("h1", {}, "Role bindings"),
+  const role = select(["member", "viewer", "functional_author", "author", "approver", "publisher", "bu_admin", "platform_admin"].map((r) => [r, r]), "viewer", () => {});
+  return h("div", {},
     h("div", { class: "panel" }, h("table", {}, h("tr", {}, ["Principal", "BU", "Role", "Granted by", ""].map((x) => h("th", {}, x))),
       bindings.map((b) => h("tr", {}, h("td", {}, b.principal), h("td", {}, b.bu), h("td", {}, b.role), h("td", { class: "muted" }, b.granted_by),
         h("td", {}, h("button", { class: "danger", onclick: () => act(async () => { await api("DELETE", "/role-bindings", b); route(); }) }, "Revoke")))))),

@@ -473,8 +473,10 @@ function chatVisibility(agent) {
 
 async function tabOverview(agent) {
   const d = agent.draft.definition;
-  const model = state.catalog.models.find((m) => m.id === d.model.catalog_id);
+  const modelId = ((d.overlay || {}).model || {}).catalog_id || d.model.catalog_id;
+  const model = state.catalog.models.find((m) => m.id === modelId);
   const latest = agent.versions[0];
+  const variant = !!agent.variant_of;
   const quick = h("div", {});
   const canQuick = state.settings && state.settings.relaxed_release;
   return h("div", { class: "overview" },
@@ -484,6 +486,14 @@ async function tabOverview(agent) {
         (d.contexts || []).length ? h("ul", { class: "plain" }, d.contexts.map((c) => h("li", {}, h("a", { href: `#/agents/${agent.name}/studio?ctx=${c.id}` }, c.name || c.id),
           c.id === d.default_context ? badge("default", "ok") : "", h("div", { class: "muted small" }, c.role || "no role yet")))) : h("p", {}, "No contexts yet."),
         h("a", { class: "btn-link", href: `#/agents/${agent.name}/studio` }, "Open functional studio →")),
+      variant ? h("div", { class: "panel" }, h("h3", {}, "🏢 BU settings"),
+        h("p", { class: "muted small" }, `Built on ${agent.variant_of} ${(d.extends || {}).version}. Its system prompt, orchestration and tools come from the core.`),
+        h("table", {},
+          h("tr", {}, h("td", {}, "Model"), h("td", {}, modelId, " ", model ? statusBadge(model.status) : "", (d.overlay || {}).model ? badge("BU choice") : "")),
+          h("tr", {}, h("td", {}, "BU rules"), h("td", {}, (d.overlay || {}).instructions ? "yes" : "none")),
+          h("tr", {}, h("td", {}, "Channels (draft)"), h("td", {}, [d.exposure.chat ? "chat app" : "", d.exposure.mcp ? "MCP" : "", "API"].filter(Boolean).join(", ")))),
+        chatVisibility(agent),
+        h("a", { class: "btn-link", href: `#/agents/${agent.name}/bu` }, "Open BU settings →")) :
       h("div", { class: "panel" }, h("h3", {}, "🛠️ Technical"),
         h("p", { class: "muted small" }, "System-level context, model, orchestration, tools, limits."),
         h("table", {},
@@ -510,7 +520,8 @@ async function tabOverview(agent) {
               quick.replaceChildren(h("p", { class: "fail" }, e.message), e.details ? pre(e.details) : "");
             }
           }) }, "⚡ Quick publish to prod"), quick)
-          : h("a", { class: "btn-link", href: `#/agents/${agent.name}/release` }, "Go to release →"))));
+          : h("a", { class: "btn-link", href: `#/agents/${agent.name}/release` }, "Go to release →"))),
+    variant ? "" : variantsPanel(agent));
 }
 
 window.tabStudio = tabStudio;

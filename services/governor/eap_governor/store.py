@@ -99,7 +99,10 @@ def list_agents(tx: Tx, bus: set[str] | None = None) -> list[dict[str, Any]]:
         d = tx.fetchone("SELECT definition, editors FROM drafts WHERE agent_name = ?", (r["name"],))
         dd = loads(d["definition"]) if d else {}
         r["contexts"] = [c.get("name") or c["id"] for c in dd.get("contexts") or []]
-        r["model"] = (dd.get("model") or {}).get("catalog_id")
+        ov = (dd.get("overlay") or {}).get("model") or {}
+        r["model"] = ov.get("catalog_id") or (dd.get("model") or {}).get("catalog_id")
+        r["extends"] = dd.get("extends")
+        r["customizable"] = bool((dd.get("customization") or {}).get("enabled"))
         r["editors"] = loads(d["editors"], []) if d else []
     return rows
 
@@ -109,6 +112,7 @@ def known_bus(tx: Tx) -> set[str]:
     bus = {r["owner_bu"] for r in tx.fetchall("SELECT DISTINCT owner_bu FROM agents")}
     bus |= {r["bu"] for r in tx.fetchall("SELECT DISTINCT bu FROM role_bindings") if r["bu"] != "*"}
     bus |= {r["scope"][3:] for r in tx.fetchall("SELECT scope FROM policies WHERE scope LIKE 'bu:%'")}
+    bus |= {r["id"] for r in tx.fetchall("SELECT id FROM business_units WHERE status = 'active'")}
     return bus
 
 
@@ -159,6 +163,9 @@ def save_draft(tx: Tx, name: str, data: dict[str, Any], actor: str) -> dict[str,
         raise Invalid("definition.name must equal the agent name")
     if defn.owner_bu != agent["owner_bu"]:
         raise Invalid("definition.owner_bu must equal the agent's owner BU")
+    if (defn.extends.agent if defn.extends else None) != agent.get("variant_of"):
+        raise Invalid(f"{name} extends {agent.get('variant_of')}; that cannot be changed in the definition"
+                      if agent.get("variant_of") else "an agent cannot be turned into a variant by editing its definition")
     h = defn.content_hash()
     cur = tx.fetchone("SELECT * FROM drafts WHERE agent_name = ?", (name,))
     if cur is None:
@@ -180,7 +187,7 @@ def save_draft(tx: Tx, name: str, data: dict[str, Any], actor: str) -> dict[str,
     return get_draft(tx, name)
 
 
-FUNCTIONAL_KEYS = ("contexts", "default_context")
+FUNCTIONAL_KEYS = ("contexts", "default_context", "overlay")
 
 
 def _section_hash(value: Any) -> str:
@@ -193,6 +200,7 @@ def section_hashes(definition: dict[str, Any]) -> dict[str, Any]:
     tech = {k: v for k, v in definition.items() if k not in FUNCTIONAL_KEYS}
     return {
         "technical": _section_hash(tech),
+        "bu": _section_hash({k: definition.get(k) for k in ("overlay", "exposure", "extends", "description")}),
         "contexts": {c["id"]: _section_hash(c) for c in definition.get("contexts") or []},
         "default_context": definition.get("default_context"),
     }
@@ -325,7 +333,10 @@ def insert_version(
             dumps(approvals),
         ),
     )
-    for kind, ref, alias in dependency_edges(defn):
+    edges = dependency_edges(effective(tx, defn))
+    if defn.extends is not None:
+        edges.append(("agent", defn.extends.agent, defn.extends.version))  # built on this core version
+    for kind, ref, alias in edges:
         tx.execute(
             "INSERT INTO dependencies (agent_name, version, dep_kind, dep_ref, dep_alias) VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT DO NOTHING",
@@ -695,16 +706,29 @@ def find_static_cycle(tx: Tx, defn: schema.AgentDefinition) -> list[str] | None:
 # ----------------------------------------------------------------------- resolve
 
 
+def effective(tx: Tx, defn: schema.AgentDefinition) -> schema.AgentDefinition:
+    """The definition the runtime executes: a BU variant composed onto its core version."""
+    if defn.extends is None:
+        return defn
+    from eap_core import variants
+
+    core = schema.parse_definition(get_version(tx, defn.extends.agent, defn.extends.version)["definition"])
+    return variants.compose(core, defn)
+
+
 def release_payload(tx: Tx, defn: schema.AgentDefinition, policy: Policy, **extra: Any) -> dict[str, Any]:
-    """What the runtime needs to execute one definition, without reading governor tables."""
+    """What the runtime needs to execute one definition, without reading governor tables.
+    content_hash identifies what was authored and released (for a variant: the variant itself)."""
+    eff = effective(tx, defn)
     return {
         **extra,
         "content_hash": defn.content_hash(),
-        "definition": defn.canonical(),
-        "limits": effective_limits(defn, policy),
-        "guardrails": [g.model_dump(mode="json") for g in effective_guardrails(defn, policy)],
+        "definition": eff.canonical(),
+        "limits": effective_limits(eff, policy),
+        "guardrails": [g.model_dump(mode="json") for g in effective_guardrails(eff, policy)],
         "soft_controls": list(policy.soft_controls),
-        "catalog": catalog_subset(tx, defn, extra.get("version")),
+        "catalog": catalog_subset(tx, eff, extra.get("version")),
+        **({"variant_of": defn.extends.model_dump()} if defn.extends else {}),
     }
 
 
@@ -769,4 +793,92 @@ def mcp_exposed(tx: Tx, alias: str, channel: str = "mcp") -> list[dict[str, Any]
                                   "starters": c.get("starters", [])} for c in d.get("contexts") or []],
                 }
             )
+    return out
+
+
+# ------------------------------------------------------------------------ BU variants
+
+
+def list_variants(tx: Tx, core: str) -> list[dict[str, Any]]:
+    out = []
+    for a in tx.fetchall("SELECT name, owner_bu FROM agents WHERE variant_of = ? AND archived = 0 ORDER BY owner_bu", (core,)):
+        d = get_draft(tx, a["name"])["definition"]
+        live = get_alias(tx, a["name"], "prod")
+        live_core = None
+        if live:
+            live_core = (get_version(tx, a["name"], live["version"])["definition"].get("extends") or {}).get("version")
+        out.append({"name": a["name"], "bu": a["owner_bu"], "draft_core_version": (d.get("extends") or {}).get("version"),
+                    "live_version": live["version"] if live else None, "live_core_version": live_core,
+                    "model": ((d.get("overlay") or {}).get("model") or {}).get("catalog_id")})
+    return out
+
+
+def create_variant(tx: Tx, core: str, bu: str, name: str | None, actor: str) -> str:
+    from eap_core import variants
+
+    core_agent = get_agent(tx, core)
+    if core_agent.get("variant_of"):
+        raise Invalid(f"{core} is itself a variant; create the variant from {core_agent['variant_of']}")
+    live = get_alias(tx, core, "prod")
+    version = live["version"] if live else latest_version(tx, core)
+    if version is None:
+        raise Invalid(f"{core} has no published version yet; BU variants build on a published core")
+    core_defn = schema.parse_definition(get_version(tx, core, version)["definition"])
+    if not core_defn.customization.enabled:
+        raise Invalid(f"{core} does not allow business-unit variants; its technical owner can enable "
+                      "Customization in the technical setup")
+    allowed = core_defn.customization.allowed_bus
+    if "*" not in allowed and bu not in allowed:
+        raise Invalid(f"business unit {bu} may not customize {core} (allowed: {', '.join(allowed)})")
+    if tx.fetchone("SELECT name FROM agents WHERE variant_of = ? AND owner_bu = ? AND archived = 0", (core, bu)):
+        raise Conflict(f"{bu} already has a variant of {core}")
+    name = name or f"{core}-{bu}"
+    if not schema.NAME_RE.match(name):
+        raise Invalid("invalid agent name (lowercase letters, digits, dashes)")
+    if tx.fetchone("SELECT name FROM agents WHERE name = ?", (name,)):
+        raise Conflict(f"agent {name} already exists")
+    tx.execute("INSERT INTO agents (name, owner_bu, description, created_by, created_at, variant_of) "
+               "VALUES (?, ?, ?, ?, ?, ?)", (name, bu, core_defn.description, actor, now_iso(), core))
+    save_draft(tx, name, variants.bootstrap(core_defn, version, name, bu), actor)
+    audit(tx, actor, "variant.create", f"agent/{name}", {"core": core, "core_version": version, "bu": bu})
+    return name
+
+
+def save_bu_settings(tx: Tx, name: str, data: dict[str, Any], actor: str, base: str | None) -> dict[str, Any]:
+    """A BU variant's own settings: overlay (rules, model, contract, output, limits, guardrails,
+    knowledge), exposure (chat / MCP) and description. Never the core's technical setup."""
+    cur = get_draft(tx, name)
+    if base and base != cur["sections"]["bu"]:
+        raise Conflict("the BU settings were changed by someone else since you loaded them; reload first",
+                       {"current": cur["sections"]["bu"]})
+    d = dict(cur["definition"])
+    if not d.get("extends"):
+        raise Invalid(f"{name} is not a BU variant")
+    for k in ("overlay", "exposure", "description"):
+        if k in data:
+            d[k] = data[k]
+    return save_draft(tx, name, d, actor)
+
+
+def rebase_variant(tx: Tx, name: str, version: str | None, actor: str) -> dict[str, Any]:
+    """Move a variant's draft onto another core version (default: the core's live version).
+    The core snapshot in the draft is refreshed; the BU's own parts are kept. Tests must run again."""
+    from eap_core import variants
+
+    cur = get_draft(tx, name)["definition"]
+    ext = cur.get("extends") or {}
+    if not ext:
+        raise Invalid(f"{name} is not a BU variant")
+    core = ext["agent"]
+    if version is None:
+        live = get_alias(tx, core, "prod")
+        version = live["version"] if live else latest_version(tx, core)
+    core_defn = schema.parse_definition(get_version(tx, core, version)["definition"])
+    fresh = variants.bootstrap(core_defn, version, name, cur["owner_bu"])
+    for k in ("contexts", "default_context", "overlay", "exposure", "description", "tags", "metadata",
+              "data_classification"):
+        if k in cur:
+            fresh[k] = cur[k]
+    out = save_draft(tx, name, fresh, actor)
+    audit(tx, actor, "variant.rebase", f"agent/{name}", {"core": core, "from": ext.get("version"), "to": version})
     return out

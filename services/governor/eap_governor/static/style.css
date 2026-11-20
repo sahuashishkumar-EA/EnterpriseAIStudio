@@ -213,3 +213,18 @@ table.mini { width: 100%; font-size: 13px; } table.mini td { padding: 2px 4px; b
 .howto { margin-top: 10px; background: var(--code); border-radius: var(--radius); padding: 8px 12px; }
 .howto summary { cursor: pointer; font-weight: 600; } .howto ol { margin: 8px 0 0; padding-left: 20px; } .howto li { margin: 4px 0; }
 .howto code { word-break: break-all; }
+
+/* people & business units */
+.row-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.row-head h2 { margin: 0; }
+.bu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
+.bu-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.bu-card.archived { opacity: .6; } .bu-head { display: flex; gap: 8px; align-items: center; } .bu-card p { margin: 0; }
+table.people { width: 100%; margin-top: 10px; } table.people td { vertical-align: top; }
+.chip { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; margin: 0 4px 4px 0; font-size: 12px; }
+.role-grid { width: 100%; font-size: 13px; } .role-grid th { font-weight: 500; text-transform: capitalize; font-size: 12px; } .role-grid td.c { text-align: center; }
+
+/* BU variants */
+.variant-banner { background: var(--code); border-radius: var(--radius); padding: 8px 12px; margin: -4px 0 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.variant-banner.warn { border-left: 3px solid var(--warn); }
+.model-picks { display: flex; flex-wrap: wrap; gap: 4px 16px; }

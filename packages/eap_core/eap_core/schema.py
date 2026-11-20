@@ -143,8 +143,19 @@ class Note(_Model):
 
 class WebSource(_Model):
     url: str
-    max_pages: int = Field(default=5, ge=1, le=25)
+    max_pages: int = Field(default=5, ge=1, le=200)
     same_domain_only: bool = True
+    # page: the page and a few linked pages (max 25). site: crawl the site smartly - sitemap first,
+    # links ranked by relevance to the context, include/exclude URL patterns (max 200 pages).
+    mode: Literal["page", "site"] = "page"
+    include: list[str] = Field(default_factory=list)  # URL substrings / globs a page must match
+    exclude: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _pages(self) -> "WebSource":
+        if self.mode == "page" and self.max_pages > 25:
+            raise ValueError("page mode reads at most 25 pages; use site mode for more")
+        return self
 
     @field_validator("url")
     @classmethod
@@ -152,6 +163,16 @@ class WebSource(_Model):
         if not re.match(r"^https?://[^\s/]+", v):
             raise ValueError("url must start with http:// or https://")
         return v
+
+
+class WebSearch(_Model):
+    """Live web search at answer time (any site, or only/never the listed domains)."""
+
+    enabled: bool = False
+    when: Literal["auto", "always"] = "auto"  # auto: only when the scanned knowledge does not cover it
+    allowed_domains: list[str] = Field(default_factory=list)  # empty = the whole web
+    blocked_domains: list[str] = Field(default_factory=list)
+    max_results: int = Field(default=5, ge=1, le=10)
 
 
 class Escalation(_Model):
@@ -188,6 +209,8 @@ class FunctionalContext(_Model):
     never: list[str] = Field(default_factory=list)
     notes: list[Note] = Field(default_factory=list)
     web_sources: list[WebSource] = Field(default_factory=list)
+    web_refresh_days: int = Field(default=0, ge=0, le=90)  # re-scan web sources every N days (0 = manual)
+    web_search: WebSearch = Field(default_factory=WebSearch)
     guardrails: FunctionalGuardrails = Field(default_factory=FunctionalGuardrails)
     examples: list[Example] = Field(default_factory=list)
     starters: list[str] = Field(default_factory=list)
@@ -239,6 +262,37 @@ class Hosting(_Model):
         return self.platform != "internal"
 
 
+class Customization(_Model):
+    """On a core agent: what business units may change in their own variant of it.
+    The technical owner keeps the system prompt, orchestration, tools and guardrails."""
+
+    enabled: bool = False
+    allowed_bus: list[str] = Field(default_factory=lambda: ["*"])
+    models: list[str] = Field(default_factory=list)  # catalog ids a BU may pick (empty = keep the core model)
+    instructions: bool = True  # BU rules appended to the core prompt
+    contract: bool = False  # BU-specific input/output contract
+    output: bool = True  # output format / citations
+    knowledge: bool = True  # BU knowledge sources and web scans
+    web_search: bool = False  # live web search in BU contexts
+
+
+class Extends(_Model):
+    agent: str
+    version: str  # the core version this variant is built and tested on
+
+
+class Overlay(_Model):
+    """A BU variant's own settings on top of the core (validated against the core's customization)."""
+
+    instructions: str = ""
+    model: ModelRef | None = None
+    contract: Contract | None = None
+    output: Output | None = None
+    limits: Limits = Field(default_factory=Limits)  # can only tighten
+    guardrails: list[Guardrail] = Field(default_factory=list)  # added to the core's
+    knowledge: list[KnowledgeBinding] = Field(default_factory=list)  # added to the core's
+
+
 class AgentDefinition(_Model):
     schema_version: Literal["1"] = SCHEMA_VERSION
     name: str
@@ -257,6 +311,9 @@ class AgentDefinition(_Model):
     contexts: list[FunctionalContext] = Field(default_factory=list)
     default_context: str | None = None
     hosting: Hosting = Field(default_factory=Hosting)
+    customization: Customization = Field(default_factory=Customization)  # core agents
+    extends: Extends | None = None  # BU variants: the core agent and version
+    overlay: Overlay = Field(default_factory=Overlay)  # BU variants
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -289,9 +346,28 @@ class AgentDefinition(_Model):
 
     def canonical(self) -> dict[str, Any]:
         data = self.model_dump(mode="json", exclude_none=False)
-        if data.get("hosting") == Hosting().model_dump(mode="json"):
-            data.pop("hosting")  # internal agents keep the hashes they had before hosting existed
+        # Fields added after v1 are left out while they hold their defaults, so existing
+        # definitions keep their content hashes (and published versions stay verifiable).
+        for key, default in (("hosting", Hosting()), ("customization", Customization()), ("overlay", Overlay())):
+            if data.get(key) == default.model_dump(mode="json"):
+                data.pop(key)
+        if data.get("extends") is None:
+            data.pop("extends", None)
+        ws_default, src_defaults = WebSearch().model_dump(mode="json"), {"mode": "page", "include": [], "exclude": []}
+        for c in data.get("contexts") or []:
+            if c.get("web_search") == ws_default:
+                c.pop("web_search")
+            if c.get("web_refresh_days") == 0:
+                c.pop("web_refresh_days")
+            for w in c.get("web_sources") or []:
+                for k, v in src_defaults.items():
+                    if w.get(k) == v:
+                        w.pop(k)
         return data
+
+    @property
+    def is_variant(self) -> bool:
+        return self.extends is not None
 
     def content_hash(self) -> str:
         return content_hash(self.canonical())

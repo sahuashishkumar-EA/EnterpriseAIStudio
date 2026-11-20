@@ -26,9 +26,22 @@ from .store import Conflict, Invalid
 
 
 def validate(tx: Tx, defn: schema.AgentDefinition, owner_bu: str) -> dict[str, Any]:
+    authored_hash = defn.content_hash()
+    violations: list[dict[str, Any]] = []
+    if defn.extends is not None:  # BU variant: check what the core allows, then validate the composition
+        from eap_core import variants
+
+        try:
+            core = schema.parse_definition(store.get_version(tx, defn.extends.agent, defn.extends.version)["definition"])
+        except store.NotFound:
+            return {"ok": False, "content_hash": authored_hash, "violations": [{
+                "code": "variant.core", "path": "extends",
+                "message": f"core {defn.extends.agent}@{defn.extends.version} does not exist"}]}
+        violations += variants.check(core, defn)
+        defn = variants.compose(core, defn)
     policy = store.effective_policy(tx, owner_bu)
     catalog = store.catalog_subset(tx, defn)
-    violations = [v.model_dump() for v in check_definition(defn, policy, catalog)]
+    violations += [v.model_dump() for v in check_definition(defn, policy, catalog)]
     for i, b in enumerate(defn.bindings.agents):
         try:
             store.get_agent(tx, b.name)
@@ -55,7 +68,7 @@ def validate(tx: Tx, defn: schema.AgentDefinition, owner_bu: str) -> dict[str, A
     cycle = store.find_static_cycle(tx, defn)
     if cycle:
         violations.append({"code": "cycle", "path": "bindings.agents", "message": "call cycle: " + " -> ".join(cycle)})
-    return {"ok": not violations, "violations": violations, "content_hash": defn.content_hash()}
+    return {"ok": not violations, "violations": violations, "content_hash": authored_hash}
 
 
 def release_check(tx: Tx, name: str, publisher: str | None = None, bump: str | None = None,
@@ -119,10 +132,12 @@ def release_check(tx: Tx, name: str, publisher: str | None = None, bump: str | N
     # --------------------------------------------------------------- semver
     latest = store.latest_version(tx, name)
     prev = schema.parse_definition(store.get_version(tx, name, latest)["definition"]) if latest else None
-    breaking = schema.breaking_changes(prev, defn) if prev else []
-    required = schema.required_bump(prev, defn)
     if prev is not None and prev.content_hash() == h:
         blockers.append(f"draft is identical to the latest version {latest}")
+    # breaking changes are judged on what callers see (for a variant: core + overlay composed)
+    eff_prev, eff_now = (store.effective(tx, prev) if prev else None), store.effective(tx, defn)
+    breaking = schema.breaking_changes(eff_prev, eff_now) if eff_prev else []
+    required = schema.required_bump(eff_prev, eff_now)
     chosen = bump or required
     if chosen not in schema.BUMP_ORDER:
         raise Invalid("bump must be major, minor or patch")

@@ -25,7 +25,7 @@ from eap_core.events import Event, Publisher, publisher_from_env
 from eap_core.policy import dump_policy
 from eap_core.tasks import LocalTaskQueue, TaskQueue, queue_from_env
 
-from . import evals, release, security, seed, store
+from . import directory, evals, release, security, seed, store
 from .config import Settings
 from .runtime_client import RuntimeClient
 from .security import Forbidden, RoleSet
@@ -175,6 +175,12 @@ def create_app(
     async def agent_bu(name: str) -> str:
         return (await db.call(store.get_agent, name))["owner_bu"]
 
+    async def require_editor(c: Caller, name: str) -> None:
+        """Tests and releases: technical authors for core agents; for a BU variant the BU's
+        functional experts own it end to end (the technical part is inherited from the core)."""
+        a = await db.call(store.get_agent, name)
+        c.roles.require(a["owner_bu"], "functional_author" if a.get("variant_of") else "author")
+
     # -------------------------------------------------------------- identity etc.
 
     async def me(request: Request, c: Caller) -> Response:
@@ -200,22 +206,76 @@ def create_app(
         known = await db.call(store.known_bus) | {x for x in c.roles.grants if x != "*"}
         if bu not in known and not c.roles.is_platform_admin():
             raise Invalid(f"business unit '{bu}' does not exist yet; pick an existing one or ask a platform admin")
-        await db.call(store.create_agent, b.get("name", ""), bu, b.get("description", ""), c.id, b.get("definition"))
+        def create(tx: Tx) -> None:
+            directory.ensure_bu(tx, bu, c.id)
+            store.create_agent(tx, b.get("name", ""), bu, b.get("description", ""), c.id, b.get("definition"))
+
+        await db.call(create)
         return _json(await db.call(lambda tx: _agent_detail(tx, b["name"])), 201)
 
     def _agent_detail(tx: Tx, name: str) -> dict[str, Any]:
         a = store.get_agent(tx, name)
-        return {
+        out = {
             **a,
             "draft": store.get_draft(tx, name),
             "versions": store.list_versions(tx, name),
             "aliases": store.list_aliases(tx, name),
         }
+        if a.get("variant_of"):
+            core = a["variant_of"]
+            live = store.get_alias(tx, core, "prod")
+            cdef = store.get_version(tx, core, live["version"])["definition"] if live else {}
+            out["core"] = {"agent": core, "owner_bu": store.get_agent(tx, core)["owner_bu"],
+                           "live_version": live["version"] if live else None,
+                           "versions": [v["version"] for v in store.list_versions(tx, core)],
+                           "customization": cdef.get("customization") or schema.Customization().model_dump(),
+                           "model": (cdef.get("model") or {}).get("catalog_id"),
+                           "contract": cdef.get("contract"), "output": cdef.get("output"),
+                           "limits": cdef.get("limits")}
+        else:
+            out["variants"] = store.list_variants(tx, name)
+        return out
+
+    async def variant_create(request: Request, c: Caller) -> Response:
+        """A business unit creates its own variant of a core agent (functional experts of that BU)."""
+        core = request.path_params["name"]
+        b = await body(request)
+        bu = (b.get("bu") or "").strip()
+        if not bu:
+            raise Invalid("choose the business unit the variant is for")
+        c.roles.require(bu, "functional_author")
+
+        def run(tx: Tx) -> dict[str, Any]:
+            name = store.create_variant(tx, core, bu, (b.get("name") or "").strip() or None, c.id)
+            return _agent_detail(tx, name)
+
+        return _json(await db.call(run), 201)
+
+    async def variants_list(request: Request, c: Caller) -> Response:
+        return _json({"variants": await db.call(store.list_variants, request.path_params["name"])})
+
+    async def draft_bu_settings(request: Request, c: Caller) -> Response:
+        name = request.path_params["name"]
+        c.roles.require(await agent_bu(name), "functional_author")
+        b = await body(request)
+        return _json(await db.call(store.save_bu_settings, name, b, c.id, b.get("base")))
+
+    async def variant_rebase(request: Request, c: Caller) -> Response:
+        name = request.path_params["name"]
+        c.roles.require(await agent_bu(name), "functional_author")
+        b = await body(request)
+        return _json(await db.call(store.rebase_variant, name, b.get("version"), c.id))
 
     async def agent_get(request: Request, c: Caller) -> Response:
         name = request.path_params["name"]
-        c.roles.require(await agent_bu(name), "viewer")
-        return _json(await db.call(_agent_detail, name))
+        a = await db.call(store.get_agent, name)
+        core_bu = (await db.call(store.get_agent, a["variant_of"]))["owner_bu"] if a.get("variant_of") else None
+        if not (c.roles.has(a["owner_bu"], "viewer") or (core_bu and c.roles.has(core_bu, "viewer"))):
+            c.roles.require(a["owner_bu"], "viewer")  # core owners may look at their variants
+        detail = await db.call(_agent_detail, name)
+        detail["permissions"] = {k: c.roles.has(a["owner_bu"], k) for k in
+                                 ("functional_author", "author", "approver", "publisher", "bu_admin")}
+        return _json(detail)
 
     async def draft_put(request: Request, c: Caller) -> Response:
         name = request.path_params["name"]
@@ -285,7 +345,7 @@ def create_app(
     async def suites_put(request: Request, c: Caller) -> Response:
         """Create/replace a suite. Body: {name, cases | content+format, assertions, required}."""
         name = request.path_params["name"]
-        c.roles.require(await agent_bu(name), "author")
+        await require_editor(c, name)
         b = await body(request)
         suite_name = (b.get("name") or "").strip()
         if not suite_name:
@@ -325,7 +385,7 @@ def create_app(
 
     async def suite_delete(request: Request, c: Caller) -> Response:
         name = request.path_params["name"]
-        c.roles.require(await agent_bu(name), "author")
+        await require_editor(c, name)
         sid = request.path_params["suite_id"]
 
         def run(tx: Tx) -> None:
@@ -340,7 +400,7 @@ def create_app(
     async def evals_run(request: Request, c: Caller) -> Response:
         """Body: {suite_ids?: [...], target: 'draft'|'version', version?: '1.2.0'}; ?wait=true runs inline."""
         name = request.path_params["name"]
-        c.roles.require(await agent_bu(name), "author")
+        await require_editor(c, name)
         b = await body(request) if (await request.body()).strip() else {}
         target = b.get("target", "draft")
         version = b.get("version")
@@ -637,11 +697,73 @@ def create_app(
             c.roles.require(bu, "bu_admin")
 
         def run(tx: Tx) -> None:
+            directory.ensure_bu(tx, bu, c.id)
             security.grant(tx, b["principal"], bu, role, c.id)
             store.audit(tx, c.id, "role.grant", f"roles/{bu}", {"principal": b["principal"], "role": role})
 
         await db.call(run)
         return _json({"granted": b}, 201)
+
+    # ------------------------------------------------------------- people & business units
+
+    def admin_bus(c: Caller) -> set[str] | None:
+        """BUs whose people the caller manages (None = all)."""
+        if c.roles.is_platform_admin():
+            return None
+        return {bu for bu in c.roles.grants if bu != "*" and c.roles.has(bu, "bu_admin")}
+
+    async def bus_list(request: Request, c: Caller) -> Response:
+        vis = None if c.roles.is_platform_admin() else (c.roles.visible_bus() or set()) | c.roles.member_bus()
+        rows = await db.call(directory.list_bus, vis)
+        adm = admin_bus(c)
+        for r in rows:
+            r["can_manage"] = adm is None or r["id"] in adm
+        return _json({"business_units": rows, "can_create": c.roles.is_platform_admin(),
+                      "roles": [{"id": k, "label": v} for k, v in directory.ROLE_LABELS.items()]})
+
+    async def bu_create(request: Request, c: Caller) -> Response:
+        if not c.roles.is_platform_admin():
+            raise Forbidden("platform_admin required")
+        b = await body(request)
+        return _json(await db.call(directory.create_bu, b, c.id), 201)
+
+    async def bu_update(request: Request, c: Caller) -> Response:
+        bu = request.path_params["bu"]
+        c.roles.require(bu, "bu_admin")
+        b = await body(request)
+        if "status" in b and not c.roles.is_platform_admin():
+            raise Forbidden("platform_admin required to archive a business unit")
+        return _json(await db.call(directory.update_bu, bu, b, c.id))
+
+    async def users_list(request: Request, c: Caller) -> Response:
+        adm = admin_bus(c)
+        if adm is not None and not adm:
+            raise Forbidden("bu_admin or platform_admin required")
+        return _json({"users": await db.call(directory.list_users, adm, request.query_params.get("bu"))})
+
+    async def user_put(request: Request, c: Caller) -> Response:
+        adm = admin_bus(c)
+        if adm is not None and not adm:
+            raise Forbidden("bu_admin or platform_admin required")
+        b = await body(request)
+        if b.get("default_bu") and adm is not None and b["default_bu"] not in adm:
+            raise Forbidden(f"you do not manage business unit {b['default_bu']}")
+        return _json(await db.call(lambda tx: directory.upsert_user(tx, request.path_params["email"], b, c.id,
+                                                                    may_change_status=adm is None)))
+
+    async def membership_put(request: Request, c: Caller) -> Response:
+        bu = request.path_params["bu"]
+        b = await body(request)
+        if bu == "*" or not c.roles.has(bu, "bu_admin"):
+            if not c.roles.is_platform_admin():
+                raise Forbidden(f"you need to be BU admin of {bu}")
+        roles = [str(r) for r in (b.get("roles") or [])]
+        if bu not in await db.call(store.known_bus) and not c.roles.is_platform_admin():
+            raise Invalid(f"business unit '{bu}' does not exist")
+        return _json(await db.call(directory.set_membership, request.path_params["email"], bu, roles, c.id))
+
+    async def user_profile_internal(request: Request, c: Caller) -> Response:
+        return _json(await db.call(directory.chat_profile, request.path_params["email"].lower()))
 
     async def roles_delete(request: Request, c: Caller) -> Response:
         b = await body(request)
@@ -714,7 +836,11 @@ def create_app(
     async def draft_technical(request: Request, c: Caller) -> Response:
         """Technical expert: save everything except functional contexts."""
         name = request.path_params["name"]
-        c.roles.require(await agent_bu(name), "author")
+        a = await db.call(store.get_agent, name)
+        c.roles.require(a["owner_bu"], "author")
+        if a.get("variant_of"):
+            raise Invalid(f"{name} is a BU variant: its technical setup comes from {a['variant_of']}. "
+                          "Change the BU settings here, or ask the core owners to change the core.")
         b = await body(request)
         return _json(await db.call(store.save_technical, name, b.get("definition") or {}, c.id, b.get("base")))
 
@@ -762,6 +888,7 @@ def create_app(
         policy = await db.call(store.effective_policy, bu)
         from eap_core.policy import effective_guardrails
 
+        defn = await db.call(store.effective, defn)  # BU variant: core + BU overlay
         tech = [g.model_dump(mode="json") for g in effective_guardrails(defn, policy)]
         schema_ = defn.output.json_schema or defn.contract.output_schema or None
         return _json({
@@ -971,7 +1098,8 @@ def create_app(
         bu = await agent_bu(name)
         if not settings.relaxed_release:
             raise Forbidden("quick publish is only available in dev environments (EAP_RELAXED_RELEASE=true)")
-        for role in ("author", "approver", "publisher"):
+        await require_editor(c, name)
+        for role in ("approver", "publisher"):
             c.roles.require(bu, role)
         b = await body(request) if (await request.body()).strip() else {}
         alias = b.get("alias") or "prod"
@@ -1123,6 +1251,17 @@ def create_app(
         Route(f"{A}/catalog/models/{{id}}/test", api(model_test), methods=["POST"]),
         Route(f"{A}/catalog/models/{{id}}/usage", api(model_usage)),
         Route(f"{A}/ops/runs", api(ops_runs)),
+        Route(f"{A}/business-units", api(bus_list)),
+        Route(f"{A}/agents/{{name}}/variants", api(variants_list)),
+        Route(f"{A}/agents/{{name}}/variants", api(variant_create), methods=["POST"]),
+        Route(f"{A}/agents/{{name}}/draft/bu", api(draft_bu_settings), methods=["PUT"]),
+        Route(f"{A}/agents/{{name}}/rebase", api(variant_rebase), methods=["POST"]),
+        Route(f"{A}/business-units", api(bu_create), methods=["POST"]),
+        Route(f"{A}/business-units/{{bu}}", api(bu_update), methods=["PUT"]),
+        Route(f"{A}/users", api(users_list)),
+        Route(f"{A}/users/{{email}}", api(user_put), methods=["PUT"]),
+        Route(f"{A}/users/{{email}}/memberships/{{bu}}", api(membership_put), methods=["PUT"]),
+        Route("/internal/v1/users/{email}/profile", internal(user_profile_internal)),
         Route(f"{A}/ops/runs/{{id}}", api(ops_run)),
         Route(f"{A}/ops/runs/{{id}}/review", api(ops_review), methods=["POST"]),
         Route(f"{A}/ops/stats", api(ops_stats)),
