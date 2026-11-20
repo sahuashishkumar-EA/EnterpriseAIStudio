@@ -136,15 +136,32 @@ async function viewAgents() {
   const name = h("input", { placeholder: "customer-profile" });
   const bu = buPicker(buInfo);
   const desc = h("input", { placeholder: "What the agent does" });
+  const me = state.me.principal;
+  const search = h("input", { placeholder: "Search agents…", type: "search" });
+  const mine = h("input", { type: "checkbox" });
+  const buFilter = select([["", "All business units"], ...buInfo.bus.map((b) => [b, b])], "", () => render());
+  const grid = h("div", { class: "agent-grid" });
+  const card = (a) => h("a", { class: "agent-card", href: "#/agents/" + a.name },
+    h("div", { class: "ac-head" }, h("b", {}, a.name), h("span", { class: "muted small" }, a.owner_bu)),
+    h("div", { class: "muted small ac-desc" }, a.description || "No description"),
+    h("div", { class: "ac-badges" },
+      a.live_version ? badge("live " + a.live_version, "ok") : badge("not live"),
+      a.has_changes && a.live_version ? badge("unpublished changes", "warn") : "",
+      a.chat_live ? badge("in chat app", "ok") : ""),
+    h("div", { class: "muted small" }, a.contexts.length ? `${a.contexts.length} context(s): ${a.contexts.slice(0, 3).join(", ")}` : "no contexts",
+      " · ", a.model || "no model"));
+  const render = () => {
+    const q = search.value.trim().toLowerCase();
+    const list = agents.filter((a) => (!q || (a.name + " " + (a.description || "") + " " + a.contexts.join(" ")).toLowerCase().includes(q))
+      && (!mine.checked || a.created_by === me || a.editors.includes(me)) && (!buFilter.value || a.owner_bu === buFilter.value));
+    grid.replaceChildren(...(list.length ? list.map(card) : [h("p", { class: "muted" }, agents.length ? "No agents match." : "No agents yet — create one below.")]));
+  };
+  search.addEventListener("input", render); mine.addEventListener("change", render);
+  render();
   return h("div", {},
     h("h1", {}, "Agents"),
-    h("div", { class: "panel" }, h("table", {},
-      h("tr", {}, ["Name", "BU", "Latest", "Aliases", "Draft updated"].map((x) => h("th", {}, x))),
-      agents.map((a) => h("tr", {},
-        h("td", {}, h("a", { href: "#/agents/" + a.name }, a.name), h("div", { class: "muted" }, a.description)),
-        h("td", {}, a.owner_bu), h("td", {}, a.latest_version || "—"),
-        h("td", {}, Object.entries(a.aliases).map(([k, v]) => h("div", {}, h("code", {}, k), " → ", v))),
-        h("td", { class: "muted" }, (a.draft_updated_at || "").slice(0, 19)))))),
+    h("div", { class: "filters" }, search, buFilter, h("label", { class: "toggle" }, mine, h("span", {}, "Only mine"))),
+    grid,
     h("div", { class: "panel" }, h("h2", {}, "New agent"),
       h("div", { class: "row" }, h("div", {}, h("label", {}, "Name"), name), h("div", {}, h("label", {}, "Owner BU"), bu),
         h("div", {}, h("label", {}, "Description"), desc),
@@ -152,7 +169,7 @@ async function viewAgents() {
           await api("POST", "/agents", { name: name.value.trim(), owner_bu: bu.value.trim(), description: desc.value });
           location.hash = "#/agents/" + name.value.trim();
         }) }, "Create")))),
-    h("div", { class: "panel" }, h("h2", {}, "Import an agent from JSON"),
+    h("details", { class: "panel" }, h("summary", {}, h("b", {}, "Import an agent from JSON")),
       h("p", { class: "muted" }, "Paste or upload a full definition, including functional contexts — e.g. ",
         h("code", {}, "examples/studio/bank-assistant.json"), ". Name and BU are taken from the JSON."),
       (() => {
@@ -168,17 +185,25 @@ async function viewAgents() {
       })()));
 }
 
-const TABS = [["overview", "Overview"], ["studio", "🧑‍💼 Functional studio"], ["technical", "🛠️ Technical setup"],
-  ["evals", "Evals"], ["release", "Approve & publish"], ["versions", "Versions & aliases"], ["audit", "Audit"]];
+function agentTabs() {
+  const tabs = [["overview", "Overview"], ["studio", "🧑‍💼 Functional studio"]];
+  if (persona() === "technical") tabs.push(["technical", "🛠️ Technical setup"]);
+  tabs.push(["release", "🚀 Release"], ["audit", "History"]);
+  return tabs;
+}
 
 async function viewAgent(name, tab) {
   const agent = await api("GET", "/agents/" + encodeURIComponent(name));
   window.onbeforeunload = null;
+  if (["evals", "versions"].includes(tab)) tab = "release"; // old links
   const body = await ({ overview: tabOverview, studio: tabStudio, technical: tabDefinition, definition: tabDefinition,
-    evals: tabEvals, release: tabRelease, versions: tabVersions, audit: tabAgentAudit }[tab] || tabOverview)(agent);
+    release: tabReleaseFlow, audit: tabAgentAudit }[tab] || tabOverview)(agent);
+  const tabs = agentTabs();
+  if (tab === "technical" && !tabs.some(([k]) => k === "technical")) tabs.splice(2, 0, ["technical", "🛠️ Technical setup"]);
   return h("div", {},
-    h("h1", {}, agent.name, " ", h("span", { class: "muted" }, "· ", agent.owner_bu)),
-    h("div", { class: "tabs" }, TABS.map(([k, label]) => h("a", { href: `#/agents/${name}/${k}`, class: k === tab ? "active" : "" }, label))),
+    h("div", { class: "crumbs" }, h("a", { href: "#/agents" }, "Agents"), " / ", agent.owner_bu),
+    h("h1", {}, agent.name, agent.aliases.some((a) => a.alias === "prod") ? h("span", { class: "badge ok", style: "margin-left:10px" }, "live") : h("span", { class: "badge", style: "margin-left:10px" }, "not live")),
+    h("div", { class: "tabs" }, tabs.map(([k, label]) => h("a", { href: `#/agents/${name}/${k}`, class: k === tab ? "active" : "" }, label))),
     body);
 }
 

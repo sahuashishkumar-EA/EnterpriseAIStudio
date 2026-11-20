@@ -129,3 +129,23 @@ pre.prompt { max-height: 360px; white-space: pre-wrap; font-size: 11.5px; }
 .timeline li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 6px; padding: 3px 0 3px 8px; font-size: 11.5px; }
 .timeline li.tl-error, .timeline li.tl-blocked { color: var(--bad); }
 .tl-what { word-break: break-word; }
+
+/* ------------------------------------------------------------ batch 2 */
+.crumbs { font-size: 12.5px; color: var(--muted); margin-bottom: 2px; }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.filters input[type=search] { max-width: 320px; }
+.filters select { width: auto; }
+.agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.agent-card { display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; color: var(--ink); }
+.agent-card:hover { text-decoration: none; border-color: var(--accent); }
+.ac-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.ac-desc { min-height: 2.6em; }
+.ac-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.stepper { list-style: none; display: flex; gap: 8px; padding: 0; margin: 0 0 14px; flex-wrap: wrap; }
+.stepper li { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13.5px; }
+.st-num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--code); font-size: 12px; font-weight: 600; }
+.st-done .st-num { background: var(--ok); color: #fff; } .st-todo { border-color: var(--accent); } .st-todo .st-num { background: var(--accent); color: var(--accent-ink); }
+.st-wait { opacity: .65; }
+.step h2 { margin-top: 0; }
+.diff details { margin: 6px 0; } .diff-table td { font-size: 12.5px; word-break: break-word; }
+.diff-old { background: color-mix(in srgb, var(--bad) 10%, transparent); text-decoration: line-through; } .diff-new { background: color-mix(in srgb, var(--ok) 12%, transparent); }

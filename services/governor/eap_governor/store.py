@@ -82,6 +82,25 @@ def list_agents(tx: Tx, bus: set[str] | None = None) -> list[dict[str, Any]]:
     for r in rows:
         r["latest_version"] = latest_version(tx, r["name"])
         r["aliases"] = {a["alias"]: a["version"] for a in list_aliases(tx, r["name"])}
+        live = r["aliases"].get("prod")
+        r["live_version"] = live
+        r["chat_live"] = False
+        r["has_changes"] = True
+        if live:
+            v = tx.fetchone("SELECT content_hash, definition FROM versions WHERE agent_name = ? AND version = ?",
+                            (r["name"], live))
+            if v:
+                r["has_changes"] = v["content_hash"] != r["draft_hash"]
+                r["chat_live"] = bool(loads(v["definition"]).get("exposure", {}).get("chat"))
+        elif r["latest_version"]:
+            v = tx.fetchone("SELECT content_hash FROM versions WHERE agent_name = ? AND version = ?",
+                            (r["name"], r["latest_version"]))
+            r["has_changes"] = bool(v) and v["content_hash"] != r["draft_hash"]
+        d = tx.fetchone("SELECT definition, editors FROM drafts WHERE agent_name = ?", (r["name"],))
+        dd = loads(d["definition"]) if d else {}
+        r["contexts"] = [c.get("name") or c["id"] for c in dd.get("contexts") or []]
+        r["model"] = (dd.get("model") or {}).get("catalog_id")
+        r["editors"] = loads(d["editors"], []) if d else []
     return rows
 
 

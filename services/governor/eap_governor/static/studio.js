@@ -333,7 +333,7 @@ async function tabStudio(agent) {
       const r = await api("POST", `/agents/${agent.name}/preview`, { context: selectedId, message: msg, history: history.slice(-20), definition: draftWith() });
       const text = r.status === "failed" ? `⚠ ${r.error ? r.error.message : "failed"}` : (typeof r.output === "string" ? r.output : JSON.stringify(r.output, null, 2));
       const meta = h("div", { class: "bubble-meta" },
-        (r.flags || []).map((f) => badge(f, "warn")), " ",
+        (r.flags || []).map((f) => badge(humanFlag(f), "warn")), " ",
         (r.sources || []).map((s, i) => h("a", { href: s.uri, target: "_blank", rel: "noopener", class: "src" }, `[${i + 1}] ${s.title || s.uri}`)),
         (r.warnings || []).length ? h("div", { class: "muted small" }, r.warnings.join("; ")) : "",
         timelineView(r));
@@ -425,7 +425,7 @@ async function tabOverview(agent) {
               quick.replaceChildren(h("p", { class: "fail" }, e.message), e.details ? pre(e.details) : "");
             }
           }) }, "⚡ Quick publish to prod"), quick)
-          : h("a", { class: "btn-link", href: `#/agents/${agent.name}/release` }, "Go to approve & publish →"))));
+          : h("a", { class: "btn-link", href: `#/agents/${agent.name}/release` }, "Go to release →"))));
 }
 
 window.tabStudio = tabStudio;
