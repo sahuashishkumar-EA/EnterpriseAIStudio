@@ -510,6 +510,15 @@ async function tabEvals(agent) {
   file.addEventListener("change", async () => {
     const f = file.files[0]; if (!f) return;
     content.value = await f.text(); fmt.value = f.name.split(".").pop().toLowerCase();
+    let doc = null;
+    if (fmt.value === "json") { try { doc = JSON.parse(content.value); } catch (e) { doc = null; } }
+    if (doc && !Array.isArray(doc) && Array.isArray(doc.cases)) {
+      // a suite file: {"name", "required", "assertions", "cases"} fills in the whole form
+      if (doc.name) sname.value = doc.name;
+      if (Array.isArray(doc.assertions)) { assertions = doc.assertions.map((a) => Object.assign({}, a)); ra(); }
+      if (typeof doc.required === "boolean") required.checked = doc.required;
+      toast(`Loaded suite ${doc.name || f.name}: ${doc.cases.length} cases, ${assertions.length} suite-level assertion(s)`);
+    }
     if (!sname.value) sname.value = f.name.replace(/\.\w+$/, "");
   });
   let assertions = [{ type: "status", equals: "ok" }];

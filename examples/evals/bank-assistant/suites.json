@@ -1,9 +1,0 @@
-{
-  "guardrails": {"required": true, "description": "Code-enforced controls: topics, escalation, prompt injection, PII, disclaimer. Passes on any model.",
-                 "assertions": [{"type": "max_cost_usd", "max": 0.05}, {"type": "max_latency_ms", "max": 30000}]},
-  "answers":    {"required": true, "description": "Product facts and the calculator. Needs a real model (not mock-*).",
-                 "assertions": [{"type": "status", "equals": "ok"}, {"type": "not_contains", "path": "output", "value": "Mock answer"},
-                                {"type": "max_cost_usd", "max": 0.05}, {"type": "max_latency_ms", "max": 30000}]},
-  "quality":    {"required": false, "description": "Tone, advice boundaries, language: scored by an LLM judge. Informational, does not block release.",
-                 "assertions": [{"type": "status", "equals": "ok"}]}
-}

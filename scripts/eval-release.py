@@ -8,8 +8,9 @@
     python scripts/eval-release.py bank-assistant examples/evals/bank-assistant --release \
         --approver tom@example.com
 
-A suite directory holds one dataset per suite (<name>.jsonl / .json / .csv) and an optional
-suites.json: {"<name>": {"required": bool, "assertions": [suite-level assertions]}}.
+A suite directory holds one file per suite. A .json suite file carries everything:
+{"name", "required", "assertions": [suite-level], "cases": [...]} (the same file the console's upload
+reads). Plain .jsonl / .csv datasets are uploaded as required suites named after the file.
 
 Auth: locally the dev headers (--user / --roles). Against a deployed governor pass
 --token "$(gcloud auth print-identity-token)" (or set EAP_TOKEN) and run each step as the person
@@ -43,18 +44,18 @@ def check(r: httpx.Response, what: str) -> dict:
 
 
 def upload(g: httpx.Client, agent: str, folder: Path, h: dict[str, str]) -> list[str]:  # returns suite ids
-    manifest = json.loads((folder / "suites.json").read_text()) if (folder / "suites.json").exists() else {}
     ids = []
     for f in sorted(folder.iterdir()):
-        if f.suffix not in (".jsonl", ".json", ".csv") or f.name == "suites.json":
+        if f.suffix not in (".jsonl", ".json", ".csv"):
             continue
-        meta = manifest.get(f.stem, {})
-        body = {"name": f.stem, "content": f.read_text(), "filename": f.name,
+        doc = json.loads(f.read_text()) if f.suffix == ".json" else None
+        meta = doc if isinstance(doc, dict) else {}
+        body = {"name": meta.get("name") or f.stem, "content": f.read_text(), "filename": f.name,
                 "assertions": meta.get("assertions", []), "required": meta.get("required", True)}
         s = check(g.post(f"/api/v1/agents/{agent}/evals/suites", json=body, headers=h), f"upload {f.name}")
         sid = s.get("id") or s.get("suite", {}).get("id")
         ids.append(sid)
-        print(f"  uploaded {f.stem:<12} {'required' if body['required'] else 'optional':<9} {sid}")
+        print(f"  uploaded {body['name']:<12} {'required' if body['required'] else 'optional':<9} {sid}")
     return ids
 
 
