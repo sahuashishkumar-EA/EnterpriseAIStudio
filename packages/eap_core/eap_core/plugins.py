@@ -185,7 +185,7 @@ _SPECS: list[PluginSpec] = [
         "builtin",
         "Built-in tool",
         "Runtime-provided tool implemented in code.",
-        _obj({"function": {"enum": ["echo", "calculator", "current_time", "crm_lookup"]}}, ["function"]),
+        _obj({"function": {"enum": ["echo", "calculator", "current_time", "crm_lookup", "account_lookup"]}}, ["function"]),
     ),
     PluginSpec(
         "tool",

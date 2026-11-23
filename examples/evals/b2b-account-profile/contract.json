@@ -1,0 +1,17 @@
+{
+  "name": "contract",
+  "description": "Output contract and CRM facts: lookup by id, domain and name, fields copied exactly, not-found and ambiguous handled. Passes on any model.",
+  "required": true,
+  "assertions": [{"type": "status", "equals": "ok"}, {"type": "regex", "path": "trace.steps", "pattern": "\"name\": \"account-lookup\""}, {"type": "max_cost_usd", "max": 0.1}, {"type": "max_latency_ms", "max": 45000}],
+  "cases": [
+    {"id": "by-id-strategic", "input": {"account": "A-2001"}, "assertions": [{"type": "equals", "path": "output.found", "value": true}, {"type": "equals", "path": "output.account_id", "value": "A-2001"}, {"type": "equals", "path": "output.legal_name", "value": "Northwind Logistics B.V."}, {"type": "equals", "path": "output.tier", "value": "strategic"}, {"type": "equals", "path": "output.arr_eur", "value": 480000}, {"type": "equals", "path": "output.renewal_date", "value": "2027-03-31"}, {"type": "equals", "path": "output.country", "value": "NL"}, {"type": "equals", "path": "output.open_cases", "value": 1}]},
+    {"id": "by-id-key", "input": {"account": "A-2002"}, "assertions": [{"type": "equals", "path": "output.found", "value": true}, {"type": "equals", "path": "output.legal_name", "value": "Contoso Manufacturing GmbH"}, {"type": "equals", "path": "output.tier", "value": "key"}, {"type": "equals", "path": "output.arr_eur", "value": 210000}, {"type": "equals", "path": "output.renewal_date", "value": "2026-12-15"}, {"type": "equals", "path": "output.open_cases", "value": 6}]},
+    {"id": "by-id-group", "input": {"account": "A-2003"}, "assertions": [{"type": "equals", "path": "output.found", "value": true}, {"type": "equals", "path": "output.legal_name", "value": "Nordic Retail Group AB"}, {"type": "equals", "path": "output.tier", "value": "strategic"}, {"type": "equals", "path": "output.arr_eur", "value": 650000}, {"type": "equals", "path": "output.industry", "value": "Retail"}]},
+    {"id": "subsidiary-parent", "input": {"account": "A-2004"}, "assertions": [{"type": "equals", "path": "output.found", "value": true}, {"type": "equals", "path": "output.legal_name", "value": "Nordic Retail Finland Oy"}, {"type": "equals", "path": "output.parent_account", "value": "A-2003"}, {"type": "equals", "path": "output.tier", "value": "growth"}, {"type": "equals", "path": "output.arr_eur", "value": 45000}]},
+    {"id": "by-domain", "input": {"account": "contoso-manufacturing.example"}, "assertions": [{"type": "equals", "path": "output.found", "value": true}, {"type": "equals", "path": "output.account_id", "value": "A-2002"}]},
+    {"id": "by-name", "input": {"account": "Northwind Logistics"}, "assertions": [{"type": "equals", "path": "output.found", "value": true}, {"type": "equals", "path": "output.account_id", "value": "A-2001"}]},
+    {"id": "lowercase-id", "input": {"account": "a-2003"}, "assertions": [{"type": "equals", "path": "output.found", "value": true}, {"type": "equals", "path": "output.account_id", "value": "A-2003"}]},
+    {"id": "unknown-account", "input": {"account": "A-9999"}, "assertions": [{"type": "equals", "path": "output.found", "value": false}]},
+    {"id": "ambiguous-name", "input": {"account": "Nordic"}, "assertions": [{"type": "equals", "path": "output.found", "value": false}]}
+  ]
+}

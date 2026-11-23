@@ -1,0 +1,18 @@
+{
+  "name": "accuracy",
+  "description": "Reasoning on CRM data: health rules, risks, opportunities, contacts, candidates and no invented values. Needs a real model (fails on mock-* on purpose).",
+  "required": true,
+  "assertions": [{"type": "status", "equals": "ok"}, {"type": "not_contains", "path": "output", "value": "mock-"}, {"type": "max_cost_usd", "max": 0.1}, {"type": "max_latency_ms", "max": 45000}],
+  "cases": [
+    {"id": "health-red-escalations", "input": {"account": "A-2002", "purpose": "renewal prep"}, "assertions": [{"type": "equals", "path": "output.health", "value": "red"}, {"type": "regex", "path": "output.risks", "pattern": "(?i)escalat"}, {"type": "regex", "path": "output.risks", "pattern": "(?i)renew"}, {"type": "regex", "path": "output.risks", "pattern": "(?i)compet"}]},
+    {"id": "health-green", "input": {"account": "A-2001"}, "assertions": [{"type": "equals", "path": "output.health", "value": "green"}]},
+    {"id": "health-amber", "input": {"account": "A-2004"}, "assertions": [{"type": "equals", "path": "output.health", "value": "amber"}]},
+    {"id": "health-green-group", "input": {"account": "A-2003"}, "assertions": [{"type": "equals", "path": "output.health", "value": "green"}]},
+    {"id": "opportunity-from-crm", "input": {"account": "A-2001", "purpose": "upsell"}, "assertions": [{"type": "regex", "path": "output.opportunities", "pattern": "(?i)analytics"}, {"type": "contains", "path": "output.products", "value": "premium-support"}]},
+    {"id": "no-invented-opportunities", "input": {"account": "A-2002", "purpose": "upsell"}, "assertions": [{"type": "llm_judge", "model": "google-ai-flash", "threshold": 0.7, "rubric": "The CRM has NO noted opportunities for this account. The output must not invent upsell opportunities, products or amounts; an empty opportunities list or one saying none are recorded is correct. It should say that the open escalations make upselling risky."}]},
+    {"id": "contacts-name-role", "input": {"account": "A-2001"}, "assertions": [{"type": "regex", "path": "output.key_contacts", "pattern": "Maria Jansen"}, {"type": "regex", "path": "output.key_contacts", "pattern": "CFO"}, {"type": "regex", "path": "output.key_contacts", "pattern": "Pieter Smit"}]},
+    {"id": "ambiguous-candidates", "input": {"account": "Nordic"}, "assertions": [{"type": "equals", "path": "output.found", "value": false}, {"type": "min_items", "path": "output.candidates", "min": 2}, {"type": "regex", "path": "output.candidates", "pattern": "A-2003"}, {"type": "regex", "path": "output.candidates", "pattern": "A-2004"}]},
+    {"id": "unknown-no-invention", "input": {"account": "Globex Corporation"}, "assertions": [{"type": "equals", "path": "output.found", "value": false}, {"type": "regex", "path": "output.summary", "pattern": "(?i)no account|not found|no match|could not find|couldn't find|no record"}]},
+    {"id": "parent-company", "input": {"account": "nordic-retail.example/fi"}, "assertions": [{"type": "equals", "path": "output.account_id", "value": "A-2004"}, {"type": "equals", "path": "output.parent_account", "value": "A-2003"}]}
+  ]
+}

@@ -130,6 +130,13 @@ TOOLS = [
      "config": {"function": "crm_lookup"},
      "input_schema": {"type": "object", "properties": {"customer_id": {"type": "string"}}, "required": ["customer_id"]},
      "data_classification": "confidential"},
+    {"id": "account-lookup", "kind": "builtin", "title": "B2B account lookup (demo)",
+     "description": "Finds a B2B account by account id, web domain or company name in the demo CRM. Returns firmographics, "
+                    "contract, health, cases, key contacts and notes; several matches return candidates.",
+     "config": {"function": "account_lookup"},
+     "input_schema": {"type": "object", "properties": {"account": {"type": "string", "description": "Account id, domain or company name"}},
+                      "required": ["account"]},
+     "data_classification": "confidential"},
 ]
 
 KNOWLEDGE = [
