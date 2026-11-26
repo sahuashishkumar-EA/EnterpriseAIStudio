@@ -135,6 +135,41 @@ def check_assertion_spec(a: Any, where: str = "suite") -> None:
         raise DatasetError(f"{where}: {a['type']}: {'; '.join(errs)}")
 
 
+def example_input(schema: dict[str, Any]) -> dict[str, Any]:
+    """A sample input built from the agent's input contract, for error messages and the console."""
+    props = (schema or {}).get("properties") or {}
+    keys = (schema or {}).get("required") or list(props)[:1]
+    return {k: f"<{(props.get(k) or {}).get('type', 'value')}>" for k in keys}
+
+
+def check_cases(cases: list[dict[str, Any]], defn: Any) -> list[str]:
+    """Problems that would make cases fail before the agent even runs: input that doesn't match
+    the agent's input contract, or an unknown functional context. Empty list = fine."""
+    import jsonschema
+
+    hosting = getattr(defn, "hosting", None)
+    if hosting is not None and getattr(hosting, "platform", "internal") != "internal":
+        return []  # external agents: inputs go to their own endpoint
+    schema = defn.contract.input_schema or {}
+    ctx_ids = [c.id for c in defn.contexts]
+    problems: list[str] = []
+    for c in cases:
+        if c.get("context") and c["context"] not in ctx_ids:
+            problems.append(f"test {c['id']}: unknown context {c['context']!r} (use the context id: {', '.join(ctx_ids) or 'none defined'})")
+        expects_invalid = any(a.get("type") == "equals" and a.get("path") == "error.code" and a.get("value") == "invalid_input"
+                              for a in c.get("assertions") or [])
+        if schema and not expects_invalid:  # a test of the input check itself may send bad input on purpose
+            try:
+                jsonschema.validate(c["input"], schema)
+            except jsonschema.ValidationError as e:
+                hint = ""
+                if set(c["input"]) == {"text"} and "text" not in (schema.get("properties") or {}):
+                    hint = " (a CSV column named 'input' becomes {\"text\": ...}; name the column after the input field instead)"
+                problems.append(f"test {c['id']}: input {json.dumps(c['input'])[:120]} does not match the agent's input: "
+                                f"{str(e).splitlines()[0]}{hint}")
+    return problems
+
+
 # -------------------------------------------------------------------- assertions
 
 _MISSING = object()

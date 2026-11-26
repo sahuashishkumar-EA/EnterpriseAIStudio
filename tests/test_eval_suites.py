@@ -78,3 +78,22 @@ def test_account_lookup_and_phone_redaction():
     assert account_lookup("Globex") == {"found": False, "searched_for": "Globex"}
     for phone in ("+358 9 555 0401", "+46 8 555 0301", "+31 20 555 0101"):
         assert PII_PATTERNS["phone"].search(f"call {phone} today").group(0) == phone
+
+
+def test_suite_upload_rejects_inputs_that_cannot_run():
+    p = build(gov_overrides={"relaxed_release": True})
+    d = json.loads((HERE / "studio" / "bank-assistant.json").read_text())
+    assert p.gov("POST", "/api/v1/agents", ADMIN, json={"name": d["name"], "owner_bu": "retail", "definition": d}).status_code == 201
+    up = lambda cases: p.gov("POST", "/api/v1/agents/bank-assistant/evals/suites", ADMIN, json={"name": "s", "cases": cases})  # noqa: E731
+    r = up([{"id": "q", "input": {"question": "hi"}}, {"id": "c", "context": "Retail customers", "input": {"message": "hi"}}])
+    assert r.status_code == 422
+    msg = r.json()["error"]["message"]
+    assert '{"message": "<string>"}' in msg and "test q:" in msg and "unknown context 'Retail customers'" in msg and "retail" in msg
+    # a CSV column called "input" gets a hint
+    r = p.gov("POST", "/api/v1/agents/bank-assistant/evals/suites", ADMIN, json={"name": "s", "content": "id,input\nq,hi\n", "format": "csv"})
+    assert r.status_code == 422 and "name the column after the input field" in r.json()["error"]["message"]
+    # fine: message at top level or in a "message" column; a test of the input check itself
+    assert up([{"id": "a", "message": "hi"}, {"id": "b", "input": {}, "assertions": [
+        {"type": "equals", "path": "error.code", "value": "invalid_input"}]}]).status_code == 201
+    assert p.gov("POST", "/api/v1/agents/bank-assistant/evals/suites", ADMIN, json={
+        "name": "csv", "content": "id,context,message\nq,retail,hi\n", "format": "csv"}).status_code == 201

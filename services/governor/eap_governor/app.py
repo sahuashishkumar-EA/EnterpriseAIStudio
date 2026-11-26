@@ -343,6 +343,15 @@ def create_app(
 
         return _json({"suites": await db.call(run)})
 
+    def _check_case_inputs(tx: Tx, name: str, cases: list[dict[str, Any]]) -> None:
+        defn = store.effective(tx, schema.parse_definition(store.get_draft(tx, name)["definition"]))
+        problems = evals.check_cases(cases, defn)
+        if problems:
+            sample = dumps(evals.example_input(defn.contract.input_schema or {}))
+            more = f" (+{len(problems) - 8} more)" if len(problems) > 8 else ""
+            raise Invalid(f"{len(problems)} test(s) would fail before the agent runs{more}. Each test's input must look like "
+                          f"{sample}. " + " | ".join(problems[:8]), {"problems": problems, "example_input": sample})
+
     async def suites_put(request: Request, c: Caller) -> Response:
         """Create/replace a suite. Body: {name, cases | content+format, assertions, required}."""
         name = request.path_params["name"]
@@ -366,6 +375,7 @@ def create_app(
 
         def run(tx: Tx) -> dict[str, Any]:
             store.get_agent(tx, name)
+            _check_case_inputs(tx, name, cases)
             cur = tx.fetchone("SELECT id FROM eval_suites WHERE agent_name = ? AND name = ?", (name, suite_name))
             sid = cur["id"] if cur else new_id("suite_")
             if cur:
@@ -1028,6 +1038,7 @@ def create_app(
         def run(tx: Tx) -> dict[str, Any]:
             from eap_core.db import loads
 
+            _check_case_inputs(tx, name, [case])
             cur = tx.fetchone("SELECT id, cases FROM eval_suites WHERE agent_name = ? AND name = ?", (name, suite_name))
             if cur:
                 cases = loads(cur["cases"], [])

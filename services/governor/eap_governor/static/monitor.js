@@ -36,6 +36,9 @@ const ERROR_HELP = [
   ["not_waiting", () => ["This run is not waiting for an answer anymore.", "Start a new conversation."]],
   ["not_found", () => ["It does not exist (anymore).", "It may have been renamed or deleted. Go back and reload."]],
   ["forbidden", () => ["You are not allowed to do this.", "Ask a BU admin for the right role on the Roles screen."]],
+  [/(\d+) test\(s\) would fail before the agent runs[^.]*\. (Each test's input must look like [^|]*?\.) ([\s\S]*)/, (m) => [
+    `${m[1]} test(s) can't run as written: the input doesn't match what this agent takes.`,
+    `${m[2]}\nFix these and save again:\n• ${m[3].split(" | ").join("\n• ")}`]],
   ["invalid", () => ["Some values are not valid.", "See the details below and correct the highlighted fields."]],
 ];
 
@@ -52,7 +55,7 @@ function errorView(e) {
   const x = explainError(e);
   let raw = x.raw && x.raw !== x.title ? x.raw : "";
   if (e.details) raw += (raw ? "\n" : "") + (typeof e.details === "string" ? e.details : JSON.stringify(e.details, null, 2)).slice(0, 1500);
-  return h("div", { class: "err" }, h("b", {}, x.title), x.fix ? h("div", { class: "err-fix" }, "→ " + x.fix) : "",
+  return h("div", { class: "err" }, h("b", {}, x.title), x.fix ? h("div", { class: "err-fix", style: "white-space:pre-line" }, "→ " + x.fix) : "",
     raw ? h("details", {}, h("summary", {}, "Technical details"), h("pre", {}, raw)) : "");
 }
 

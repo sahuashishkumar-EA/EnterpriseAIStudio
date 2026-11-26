@@ -167,6 +167,8 @@ The checks look at the agent's result:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| **Every** test fails with `invalid_input: 'message' is a required property` (or another field) | the test input doesn't use the agent's input field names, e.g. `{"question": …}`, `{"text": …}` or a CSV column called `input` | use the agent's field names. The hint above the Cases box shows the right shape, e.g. `{"message": "…"}`, or `{"account": "…"}` for the B2B agent. In a CSV, name the column `message` (or `input.account`). Saving a suite now refuses such tests and lists them. |
+| `unknown context 'Retail customers'` | the context's display name was used | use the context **id** shown in the hint (`retail`, `advisor-desk`) |
 | Every answer starts with "Mock answer" | mock model | set a real model in Technical setup |
 | `contains output: not found: 10%` but the answer says "10 percent" | the check is too strict | use `regex` (`10 ?(%|percent)`) |
 | Judge `score=0.00` with no reason | the judge model isn't reachable | set `model` on the check and check the API key |

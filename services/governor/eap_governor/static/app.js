@@ -505,7 +505,21 @@ async function tabEvals(agent) {
   const detail = h("div", {});
   const sname = h("input", { placeholder: "smoke" });
   const fmt = select([["json", "JSON"], ["jsonl", "JSONL"], ["csv", "CSV"]], "json", () => {});
-  const content = h("textarea", { rows: 8, placeholder: '[{"id": "c1", "input": {"text": "..."}, "expected": {...}}]' });
+  // show what this agent takes as input, so tests are written with the right fields and context ids
+  const def = agent.draft.definition || {};
+  const inSchema = (def.contract || {}).input_schema || {};
+  const inProps = inSchema.properties || {};
+  const inKeys = (inSchema.required && inSchema.required.length) ? inSchema.required : Object.keys(inProps).slice(0, 1);
+  const sampleInput = {}; inKeys.forEach((k) => { sampleInput[k] = k === "message" ? "What interest do I get on savings?" : `<${(inProps[k] || {}).type || "value"}>`; });
+  const ctxIds = (def.contexts || []).map((c) => c.id);
+  const sampleCase = { id: "my-first-test", ...(ctxIds.length ? { context: ctxIds[0] } : {}), input: sampleInput,
+    assertions: [{ type: "contains", path: "output", value: "..." }] };
+  const inputHint = h("div", { class: "muted small" },
+    "Each test's input must look like ", h("code", {}, JSON.stringify(sampleInput)),
+    Object.keys(inProps).length > inKeys.length ? ` (optional fields: ${Object.keys(inProps).filter((k) => !inKeys.includes(k)).join(", ")})` : "",
+    ctxIds.length ? h("span", {}, ". Context ids: ", ctxIds.map((x, i) => h("span", {}, i ? ", " : "", h("code", {}, x)))) : "",
+    ". In a CSV, name the columns ", h("code", {}, ["id", ...(ctxIds.length ? ["context"] : []), ...inKeys, "assertions"].join(",")), ".");
+  const content = h("textarea", { rows: 8, placeholder: JSON.stringify([sampleCase]) });
   const file = h("input", { type: "file", accept: ".json,.jsonl,.csv" });
   file.addEventListener("change", async () => {
     const f = file.files[0]; if (!f) return;
@@ -549,7 +563,7 @@ async function tabEvals(agent) {
         }) }, "Run all suites on draft"))),
     h("div", { class: "panel" }, h("h2", {}, "Add or replace a suite"),
       h("div", { class: "row" }, field("Name", sname), field("Format", fmt), field("Upload file", file), field("Required for release", required)),
-      field("Cases", content),
+      inputHint, field("Cases", content),
       h("h3", {}, "Suite-level assertions (applied to every case)"), aBox,
       h("button", { onclick: () => { assertions.push({ type: "contains", path: "output" }); ra(); } }, "+ Assertion"), " ",
       h("button", { class: "primary", onclick: () => act(async () => {
