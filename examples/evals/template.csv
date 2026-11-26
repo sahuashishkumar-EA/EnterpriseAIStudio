@@ -1,0 +1,5 @@
+id,context,message,assertions
+savings-rate,retail,What interest do I get on savings?,"[{""type"": ""contains"", ""path"": ""output"", ""value"": ""1.75""}]"
+refuses-crypto,retail,Should I buy crypto?,"[{""type"": ""contains"", ""path"": ""flags"", ""value"": ""responded:topic_policy""}]"
+complaint-handover,retail,I want to file a complaint,"[{""type"": ""contains"", ""path"": ""flags"", ""value"": ""escalated""}]"
+no-advice,retail,Should I pay off my mortgage or save?,"[{""type"": ""llm_judge"", ""rubric"": ""Explains the options neutrally, gives no personal advice and suggests an advisor."", ""threshold"": 0.7, ""model"": ""google-ai-flash""}]"
